@@ -35,7 +35,7 @@ FRACTIONS = np.round(np.arange(0.05, 0.20, 0.01), 2)   # fracciones candidatas
 
 
 def _feature_stream(rgb: np.ndarray, factor: int, texture: bool = False,
-                    background: str = SEGMENT_BACKGROUND_MODE):
+                    background: str = SEGMENT_BACKGROUND_MODE, lesion: bool = False):
     """Mapas sin estandarizar, de a uno, a 1/`factor`: (campo detectado, generador de (nombre, mapa)).
 
     Genera los de SEGMENT_BASE_FEATURES (los orientados como la mayor respuesta
@@ -43,11 +43,13 @@ def _feature_stream(rgb: np.ndarray, factor: int, texture: bool = False,
     cada escala de la etapa 4 por separado y, si `texture`, la textura de la
     matriz de coocurrencia del verde corregido. Calcula un mapa por vez y solo
     guarda el verde y las mayores respuestas, así que entra en memoria también
-    a resolución completa. `background` es el modo de preprocess.normalizar_fondo.
+    a resolución completa. `background` es el modo de preprocess.normalizar_fondo;
+    con `lesion`, también los mapas contra las lesiones (config.LESION_FEATURES).
     """
     from . import config as c
-    from .enhance import (apply_filter, frangi_filter, gabor_filter, glcm_texture, line_detector,
-                          matched_filter, prepare_maps, quantize, scale_px, sigma_for_width)
+    from .enhance import (apply_filter, fdog_edge, frangi_filter, gabor_filter, glcm_texture, line_detector,
+                          line_opening_reconstruction, matched_filter, prepare_maps, quantize, scale_px,
+                          sigma_for_width)
     from .preprocess import normalizar_fondo
 
     maps, region, d = prepare_maps(rgb, ["Verde"], factor)
@@ -72,12 +74,25 @@ def _feature_stream(rgb: np.ndarray, factor: int, texture: bool = False,
                 if name != "Frangi":
                     best[name] = m if name not in best else np.maximum(best[name], m)
         yield from best.items()
+        if lesion:
+            for rel, name in zip(c.LESION_LINE_REL, c.LESION_FEATURES):
+                yield name, line_opening_reconstruction(green, max(3.0, scale_px(rel, d)))
+            window = int(round(scale_px(c.LESION_FDOG_WINDOW_REL, d)))
+            for w, rel in zip(c.ENHANCE_WIDTHS_PX, c.ENHANCE_WIDTHS_REL):
+                s = max(sigma_for_width(scale_px(rel, d)), c.ENHANCE_SIGMA_MIN_PX)
+                yield f"borde asimétrico {w}", fdog_edge(green, s, c.ENHANCE_MATCHED_LENGTH * s, window)
         if texture:
             window = max(3, int(round(scale_px(c.GLCM_WINDOW_REL, d))) | 1)
             for name, m in glcm_texture(quantize(green, c.GLCM_LEVELS, region), c.GLCM_LEVELS, window).items():
                 yield f"textura {name}", m
 
     return region, generate()
+
+
+def _wants_lesion(features) -> bool:
+    from .config import LESION_FEATURES
+
+    return any(n in LESION_FEATURES for n in features)
 
 
 def _standardized(m: np.ndarray, region: np.ndarray) -> np.ndarray:
@@ -87,17 +102,18 @@ def _standardized(m: np.ndarray, region: np.ndarray) -> np.ndarray:
 
 
 def compute_features(rgb: np.ndarray, factor: int = SEGMENT_FACTOR,
-                     background: str = SEGMENT_BACKGROUND_MODE) -> tuple[np.ndarray, np.ndarray]:
+                     background: str = SEGMENT_BACKGROUND_MODE,
+                     features: list[str] = SEGMENT_FEATURES) -> tuple[np.ndarray, np.ndarray]:
     """Los mapas de SEGMENT_FEATURES estandarizados, a 1/`factor` de la resolución.
 
     Devuelve (mapas con forma (n_mapas, alto, ancho), campo detectado a esa
     resolución). Usa solo la foto. Tiene todos los mapas en memoria: a
     resolución completa conviene feature_scores.
     """
-    region, stream = _feature_stream(rgb, factor, any(n.startswith("textura") for n in SEGMENT_FEATURES),
-                                     background)
-    maps = {n: _standardized(m, region) for n, m in stream if n in SEGMENT_FEATURES}
-    return np.stack([maps[n] for n in SEGMENT_FEATURES]), region
+    region, stream = _feature_stream(rgb, factor, any(n.startswith("textura") for n in features),
+                                     background, _wants_lesion(features))
+    maps = {n: _standardized(m, region) for n, m in stream if n in features}
+    return np.stack([maps[n] for n in features]), region
 
 
 def compute_feature_bank(rgb: np.ndarray, factor: int = SEGMENT_FACTOR) -> tuple[np.ndarray, list[str]]:
@@ -113,7 +129,8 @@ def compute_feature_bank(rgb: np.ndarray, factor: int = SEGMENT_FACTOR) -> tuple
 
 
 def feature_scores(rgb: np.ndarray, weight_sets: list[np.ndarray], factor: int = SEGMENT_FACTOR,
-                   keep: tuple[str, ...] = (), background: str = SEGMENT_BACKGROUND_MODE
+                   keep: tuple[str, ...] = (), background: str = SEGMENT_BACKGROUND_MODE,
+                   features: list[str] = SEGMENT_FEATURES
                    ) -> tuple[list[np.ndarray], dict[str, np.ndarray], np.ndarray]:
     """Probabilidad de vaso para uno o varios juegos de pesos, calculando los mapas de a uno.
 
@@ -121,8 +138,8 @@ def feature_scores(rgb: np.ndarray, weight_sets: list[np.ndarray], factor: int =
     los mapas de `keep`, estandarizados; campo detectado). Da lo mismo que
     compute_features + predict_logistic sin tener los 26 mapas en memoria.
     """
-    region, stream = _feature_stream(rgb, factor, background=background)
-    index = {n: j for j, n in enumerate(SEGMENT_FEATURES)}
+    region, stream = _feature_stream(rgb, factor, background=background, lesion=_wants_lesion(features))
+    index = {n: j for j, n in enumerate(features)}
     lins = [np.full(region.shape, w[0], dtype=np.float64) for w in weight_sets]
     kept = {}
     for name, m in stream:
@@ -138,7 +155,8 @@ def feature_scores(rgb: np.ndarray, weight_sets: list[np.ndarray], factor: int =
 
 
 def sample_features(image_id: str, factor: int = SEGMENT_FACTOR,
-                    background: str = SEGMENT_BACKGROUND_MODE) -> np.ndarray:
+                    background: str = SEGMENT_BACKGROUND_MODE,
+                    features: list[str] = SEGMENT_FEATURES) -> np.ndarray:
     """Valores de los mapas de SEGMENT_FEATURES en los píxeles de la muestra fija de una imagen de desarrollo.
 
     Filas: píxeles de la muestra (src/evaluation.py); columnas: mapas. Calcula
@@ -148,10 +166,11 @@ def sample_features(image_id: str, factor: int = SEGMENT_FACTOR,
     from .evaluation import load_sample, sample_values
 
     s = load_sample(image_id)
-    region, stream = _feature_stream(load_image(image_id), factor, background=background)
+    region, stream = _feature_stream(load_image(image_id), factor, background=background,
+                                     lesion=_wants_lesion(features))
     cols = {n: sample_values(_standardized(m, region), s).astype(np.float32)
-            for n, m in stream if n in SEGMENT_FEATURES}
-    return np.stack([cols[n] for n in SEGMENT_FEATURES], axis=1)
+            for n, m in stream if n in features}
+    return np.stack([cols[n] for n in features], axis=1)
 
 
 def _full_size(score: np.ndarray, shape: tuple[int, int]) -> np.ndarray:

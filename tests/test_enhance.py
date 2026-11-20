@@ -254,3 +254,33 @@ def test_works_with_small_diameter(name):
     # a la cuarta parte de la resolución las σ más chicas quedan en el piso de 0,5
     img, c = line_for_filters(width=3)
     assert np.isfinite(apply_filter(name, img, diameter=3262 / 4)).all()
+
+# --- Mapas contra las lesiones (etapa 5h) ------------------------------------------
+
+def _linea_y_mancha(n=121):
+    """Fondo 0, una línea clara horizontal de 3 píxeles de ancho y una mancha clara redonda de radio 5."""
+    yy, xx = np.mgrid[:n, :n]
+    img = np.zeros((n, n), np.float32)
+    img[30:33, 10:111] = 1.0
+    img[(yy - 85) ** 2 + (xx - 60) ** 2 <= 25] = 1.0
+    return img
+
+
+def test_apertura_por_reconstruccion_conserva_la_linea_y_borra_la_mancha():
+    from src.enhance import line_opening_reconstruction
+
+    img = _linea_y_mancha()
+    out = line_opening_reconstruction(img, length_px=21)
+    assert out[31, 20:100].min() > 0.99          # la línea queda entera
+    assert out[80:91, 55:66].max() < 0.01        # la mancha (más chica que el segmento) desaparece
+
+
+def test_borde_asimetrico_alto_en_escalon_y_bajo_en_linea():
+    from src.enhance import fdog_edge
+
+    n = 101
+    linea = np.zeros((n, n), np.float32); linea[:, 49:52] = 1.0          # vaso: perfil simétrico
+    escalon = np.zeros((n, n), np.float32); escalon[:, 50:] = 1.0         # borde de una lesión
+    kw = dict(sigma_px=1.5, length_px=7, window_px=15)   # ventana más ancha que el vaso
+    assert fdog_edge(escalon, **kw)[50, 50] > 2 * fdog_edge(linea, **kw)[50, 50]
+    assert np.allclose(fdog_edge(np.ones((n, n), np.float32), **kw), 0, atol=1e-6)   # fondo plano: 0

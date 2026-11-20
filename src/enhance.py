@@ -207,6 +207,71 @@ def gabor_filter(m: np.ndarray, sigma_px: float, elongation: float = 2.0,
                              for t in _angles(n_orientations)])
 
 
+# --- Mapas contra las lesiones (etapa 5h, notebooks/05h_lesiones.ipynb) -------------
+
+def line_opening_reconstruction(m: np.ndarray, length_px: float,
+                                n_orientations: int = N_ORIENTATIONS) -> np.ndarray:
+    """Apertura por reconstrucción con segmentos (Zana y Klein, 2001), para vasos claros.
+
+    1. Apertura del mapa con un segmento de largo `length_px` en cada una de
+       las `n_orientations` direcciones, y en cada píxel la mayor: sobrevive
+       lo claro que contiene un segmento de ese largo en alguna dirección
+       (los vasos); las manchas más chicas que el segmento (lesiones) bajan
+       al nivel del fondo.
+    2. Reconstrucción por dilatación de ese resultado (el marcador) debajo del
+       mapa original (la máscara), con el cuadrado de 3 × 3: lo que sobrevivió
+       recupera su forma exacta, incluidas las partes curvas del vaso que la
+       apertura recortó.
+    """
+    from skimage.morphology import reconstruction
+
+    m = np.asarray(m, dtype=np.float64)
+    marker = None
+    for t in _angles(n_orientations):
+        fp = line_kernel(length_px, t) > 0
+        o = ndi.grey_opening(m, footprint=fp, mode="reflect")
+        marker = o if marker is None else np.maximum(marker, o)
+    return reconstruction(np.minimum(marker, m), m, method="dilation").astype(np.float32)
+
+
+def fdog_kernel(sigma_px: float, length_px: float, theta: float) -> np.ndarray:
+    """Núcleo de la primera derivada de la gaussiana a través del vaso, constante a lo largo.
+
+    Mismo soporte que matched_kernel (±3σ a través, `length_px` a lo largo).
+    Es impar: responde a los escalones de brillo (bordes) y no a un perfil
+    simétrico centrado (un vaso).
+    """
+    radius = int(np.ceil(max(3 * sigma_px, length_px / 2))) + 1
+    u, v = _axes(radius, theta)
+    support = (np.abs(u) <= 3 * sigma_px) & (np.abs(v) <= length_px / 2)
+    k = np.where(support, -u / sigma_px ** 2 * np.exp(-u ** 2 / (2 * sigma_px ** 2)), 0.0)
+    return (k / np.abs(k).sum()).astype(np.float32)
+
+
+def fdog_edge(m: np.ndarray, sigma_px: float, length_px: float, window_px: int,
+              n_orientations: int = N_ORIENTATIONS) -> np.ndarray:
+    """Borde asimétrico (Zhang, Zhang, Zhang y Karray, 2010): |media local de la derivada de la gaussiana|.
+
+    En cada dirección, la respuesta CON SIGNO al núcleo fdog_kernel se
+    promedia en una ventana de `window_px` de lado; en cada píxel queda el
+    mayor valor absoluto entre las direcciones. Sobre un vaso, los dos bordes
+    dan respuestas de signo opuesto que se cancelan en la ventana (perfil
+    simétrico); junto a un escalón de brillo (bordes de exudados y
+    hemorragias, el borde del disco) no se cancelan. El filtro adaptado, en
+    cambio, responde a los dos. La ventana tiene que ser más ancha que el vaso.
+    """
+    m = np.asarray(m, dtype=np.float32)
+    radius = fdog_kernel(sigma_px, length_px, 0.0).shape[0] // 2
+    padded = np.pad(m, radius, mode="reflect")
+    size = max(3, int(window_px) | 1)
+    best = None
+    for t in _angles(n_orientations):
+        r = oaconvolve(padded, fdog_kernel(sigma_px, length_px, t), mode="same")[radius:-radius, radius:-radius]
+        r = np.abs(ndi.uniform_filter(r.astype(np.float32), size=size, mode="reflect"))
+        best = r if best is None else np.maximum(best, r)
+    return best.astype(np.float32)
+
+
 # --- Textura: matriz de coocurrencia en una ventana --------------------------------
 # Cuatro direcciones (0°, 45°, 90° y 135°); cada medida se promedia entre ellas.
 GLCM_OFFSETS = ((0, 1), (-1, 1), (-1, 0), (-1, -1))   # (fila, columna) para distancia 1

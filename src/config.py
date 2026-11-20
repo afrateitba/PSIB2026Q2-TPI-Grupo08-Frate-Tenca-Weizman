@@ -143,6 +143,16 @@ SEGMENT_BASE_FEATURES = ["verde corregido", "sombrero de copa", "detector de lí
 SEGMENT_FEATURES = SEGMENT_BASE_FEATURES + [
     f"{f} {w}" for w in ENHANCE_WIDTHS_PX
     for f in ("detector de líneas", "filtro adaptado", "Gabor", "Frangi")]
+# Mapas contra las lesiones (etapa 5h, notebooks/05h_lesiones.ipynb). Se calculan sobre el verde
+# normalizado solo si están en la lista de mapas pedida.
+# - Apertura por reconstrucción con segmentos (Zana y Klein, 2001): segmentos de 2 % y 4 % del
+#   diámetro del campo (el artículo usa 15 píxeles en imágenes de unos 540 de diámetro, un 2,8 %).
+# - Borde asimétrico (Zhang et al., 2010): derivada de la gaussiana en las escalas de la etapa 4,
+#   con la media local en una ventana de 31/540 del diámetro, como en el artículo.
+LESION_LINE_REL = (0.02, 0.04)
+LESION_FDOG_WINDOW_REL = 31 / 540
+LESION_FEATURES = ([f"apertura por reconstrucción {int(round(100 * r))} %" for r in LESION_LINE_REL]
+                   + [f"borde asimétrico {w}" for w in ENHANCE_WIDTHS_PX])
 SEGMENT_REFERENCE_FILTER = "detector de líneas"
 SEGMENT_FRACTION = 0.09        # elegida en las 5 vueltas
 # Regla del umbral, cerrada en la etapa 8 (notebooks/08_robustez.ipynb) con el
