@@ -128,6 +128,10 @@ EVAL_BG_FRACTION = 0.2
 # regla de umbral. La regla (fracción o valor fijo) se cierra en la etapa 8.
 SEGMENT_FACTOR = 2
 SEGMENT_BACKGROUND_SIGMA_REL = 0.02
+# Modelo de la corrección del fondo (preprocess.normalizar_fondo): "resta" (iluminación
+# aditiva, la del algoritmo congelado), "división" o "luminosidad y contraste"
+# (iluminación multiplicativa). Se decide en notebooks/05g_normalizacion.ipynb.
+SEGMENT_BACKGROUND_MODE = "resta"
 SEGMENT_BASE_FEATURES = ["verde corregido", "sombrero de copa", "detector de líneas",
                          "filtro adaptado", "Gabor", "Frangi"]
 # Ronda de mejoras (etapa 5e, notebooks/05e_ronda_mejoras.ipynb; plan, desvío 14.6):

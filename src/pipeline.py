@@ -23,7 +23,8 @@ from pathlib import Path
 
 import numpy as np
 
-from .config import (EVAL_BG_FRACTION, ROOT, SEGMENT_BACKGROUND_SIGMA_REL, SEGMENT_BALANCED_TRAINING,
+from .config import (EVAL_BG_FRACTION, ROOT, SEGMENT_BACKGROUND_MODE, SEGMENT_BACKGROUND_SIGMA_REL,
+                     SEGMENT_BALANCED_TRAINING,
                      SEGMENT_BASE_FEATURES, SEGMENT_FACTOR, SEGMENT_FEATURES, SEGMENT_FRACTION,
                      SEGMENT_REFERENCE_FILTER, SEED)
 
@@ -33,7 +34,8 @@ N_THR = 30_000      # píxeles de la muestra fija por imagen para elegir la frac
 FRACTIONS = np.round(np.arange(0.05, 0.20, 0.01), 2)   # fracciones candidatas
 
 
-def _feature_stream(rgb: np.ndarray, factor: int, texture: bool = False):
+def _feature_stream(rgb: np.ndarray, factor: int, texture: bool = False,
+                    background: str = SEGMENT_BACKGROUND_MODE):
     """Mapas sin estandarizar, de a uno, a 1/`factor`: (campo detectado, generador de (nombre, mapa)).
 
     Genera los de SEGMENT_BASE_FEATURES (los orientados como la mayor respuesta
@@ -41,15 +43,15 @@ def _feature_stream(rgb: np.ndarray, factor: int, texture: bool = False):
     cada escala de la etapa 4 por separado y, si `texture`, la textura de la
     matriz de coocurrencia del verde corregido. Calcula un mapa por vez y solo
     guarda el verde y las mayores respuestas, así que entra en memoria también
-    a resolución completa.
+    a resolución completa. `background` es el modo de preprocess.normalizar_fondo.
     """
     from . import config as c
     from .enhance import (apply_filter, frangi_filter, gabor_filter, glcm_texture, line_detector,
                           matched_filter, prepare_maps, quantize, scale_px, sigma_for_width)
-    from .preprocess import corregir_fondo
+    from .preprocess import normalizar_fondo
 
     maps, region, d = prepare_maps(rgb, ["Verde"], factor)
-    green = corregir_fondo(maps["Verde"], region, SEGMENT_BACKGROUND_SIGMA_REL * d)
+    green = normalizar_fondo(maps["Verde"], region, SEGMENT_BACKGROUND_SIGMA_REL * d, background)
     del maps
 
     def generate():
@@ -84,14 +86,16 @@ def _standardized(m: np.ndarray, region: np.ndarray) -> np.ndarray:
     return standardize(np.asarray(m, dtype=np.float32), region)
 
 
-def compute_features(rgb: np.ndarray, factor: int = SEGMENT_FACTOR) -> tuple[np.ndarray, np.ndarray]:
+def compute_features(rgb: np.ndarray, factor: int = SEGMENT_FACTOR,
+                     background: str = SEGMENT_BACKGROUND_MODE) -> tuple[np.ndarray, np.ndarray]:
     """Los mapas de SEGMENT_FEATURES estandarizados, a 1/`factor` de la resolución.
 
     Devuelve (mapas con forma (n_mapas, alto, ancho), campo detectado a esa
     resolución). Usa solo la foto. Tiene todos los mapas en memoria: a
     resolución completa conviene feature_scores.
     """
-    region, stream = _feature_stream(rgb, factor, any(n.startswith("textura") for n in SEGMENT_FEATURES))
+    region, stream = _feature_stream(rgb, factor, any(n.startswith("textura") for n in SEGMENT_FEATURES),
+                                     background)
     maps = {n: _standardized(m, region) for n, m in stream if n in SEGMENT_FEATURES}
     return np.stack([maps[n] for n in SEGMENT_FEATURES]), region
 
@@ -109,14 +113,15 @@ def compute_feature_bank(rgb: np.ndarray, factor: int = SEGMENT_FACTOR) -> tuple
 
 
 def feature_scores(rgb: np.ndarray, weight_sets: list[np.ndarray], factor: int = SEGMENT_FACTOR,
-                   keep: tuple[str, ...] = ()) -> tuple[list[np.ndarray], dict[str, np.ndarray], np.ndarray]:
+                   keep: tuple[str, ...] = (), background: str = SEGMENT_BACKGROUND_MODE
+                   ) -> tuple[list[np.ndarray], dict[str, np.ndarray], np.ndarray]:
     """Probabilidad de vaso para uno o varios juegos de pesos, calculando los mapas de a uno.
 
     Devuelve (una probabilidad por juego de pesos, a 1/`factor` y en float32;
     los mapas de `keep`, estandarizados; campo detectado). Da lo mismo que
     compute_features + predict_logistic sin tener los 26 mapas en memoria.
     """
-    region, stream = _feature_stream(rgb, factor)
+    region, stream = _feature_stream(rgb, factor, background=background)
     index = {n: j for j, n in enumerate(SEGMENT_FEATURES)}
     lins = [np.full(region.shape, w[0], dtype=np.float64) for w in weight_sets]
     kept = {}
@@ -132,7 +137,8 @@ def feature_scores(rgb: np.ndarray, weight_sets: list[np.ndarray], factor: int =
     return probs, kept, region
 
 
-def sample_features(image_id: str, factor: int = SEGMENT_FACTOR) -> np.ndarray:
+def sample_features(image_id: str, factor: int = SEGMENT_FACTOR,
+                    background: str = SEGMENT_BACKGROUND_MODE) -> np.ndarray:
     """Valores de los mapas de SEGMENT_FEATURES en los píxeles de la muestra fija de una imagen de desarrollo.
 
     Filas: píxeles de la muestra (src/evaluation.py); columnas: mapas. Calcula
@@ -142,7 +148,7 @@ def sample_features(image_id: str, factor: int = SEGMENT_FACTOR) -> np.ndarray:
     from .evaluation import load_sample, sample_values
 
     s = load_sample(image_id)
-    region, stream = _feature_stream(load_image(image_id), factor)
+    region, stream = _feature_stream(load_image(image_id), factor, background=background)
     cols = {n: sample_values(_standardized(m, region), s).astype(np.float32)
             for n, m in stream if n in SEGMENT_FEATURES}
     return np.stack([cols[n] for n in SEGMENT_FEATURES], axis=1)
@@ -165,7 +171,8 @@ def _threshold(score_full: np.ndarray, fov_full: np.ndarray, fraction: float | N
 
 def segment_image(rgb: np.ndarray, weights: np.ndarray, fraction: float | None = SEGMENT_FRACTION,
                   value: float | None = None, features: np.ndarray | None = None,
-                  return_score: bool = False, factor: int = SEGMENT_FACTOR):
+                  return_score: bool = False, factor: int = SEGMENT_FACTOR,
+                  background: str = SEGMENT_BACKGROUND_MODE):
     """Máscara de vasos (booleana, del tamaño de la foto) con la combinación de filtros.
 
     `weights` son los de fit_weights / load_weights (ordenada al origen primero).
@@ -180,7 +187,7 @@ def segment_image(rgb: np.ndarray, weights: np.ndarray, fraction: float | None =
         prob = predict_logistic(features.reshape(len(features), -1).T, weights)
         prob = prob.reshape(features.shape[1:]).astype(np.float32)
     else:
-        (prob,), _, _ = feature_scores(rgb, [weights], factor)
+        (prob,), _, _ = feature_scores(rgb, [weights], factor, background=background)
     prob = _full_size(prob, rgb.shape[:2])
     mask = _threshold(prob, detect_fov_robust(rgb), fraction, value)
     return (mask, prob) if return_score else mask
@@ -188,14 +195,14 @@ def segment_image(rgb: np.ndarray, weights: np.ndarray, fraction: float | None =
 
 def segment_reference(rgb: np.ndarray, fraction: float | None = SEGMENT_FRACTION,
                       value: float | None = None, features: np.ndarray | None = None,
-                      factor: int = SEGMENT_FACTOR) -> np.ndarray:
+                      factor: int = SEGMENT_FACTOR, background: str = SEGMENT_BACKGROUND_MODE) -> np.ndarray:
     """Referencia clásica: solo el detector de líneas sobre el verde, con la misma regla de umbral."""
     from .fov import detect_fov_robust
 
     if features is not None:
         score = features[SEGMENT_FEATURES.index(SEGMENT_REFERENCE_FILTER)]
     else:
-        _, kept, _ = feature_scores(rgb, [], factor, keep=(SEGMENT_REFERENCE_FILTER,))
+        _, kept, _ = feature_scores(rgb, [], factor, keep=(SEGMENT_REFERENCE_FILTER,), background=background)
         score = kept[SEGMENT_REFERENCE_FILTER]
     return _threshold(_full_size(score, rgb.shape[:2]), detect_fov_robust(rgb), fraction, value)
 
@@ -206,7 +213,8 @@ def _choose(rng: np.random.Generator, idx: np.ndarray, n: int) -> np.ndarray:
 
 def training_pixels(image_id: str, values: np.ndarray | None = None,
                     balanced: bool = SEGMENT_BALANCED_TRAINING,
-                    factor: int = SEGMENT_FACTOR) -> dict[str, np.ndarray]:
+                    factor: int = SEGMENT_FACTOR,
+                    background: str = SEGMENT_BACKGROUND_MODE) -> dict[str, np.ndarray]:
     """Píxeles de una imagen de desarrollo para ajustar los pesos y elegir la fracción.
 
     Salen de la muestra fija de evaluación (src/evaluation.py), con la semilla
@@ -223,7 +231,7 @@ def training_pixels(image_id: str, values: np.ndarray | None = None,
     from .vessels import MEDIUM, THICK, THIN
 
     s = load_sample(image_id)
-    v = sample_features(image_id, factor) if values is None else values
+    v = sample_features(image_id, factor, background) if values is None else values
     rng = np.random.default_rng(SEED + sum(map(ord, image_id)))
     pos, neg = np.flatnonzero(s.truth), np.flatnonzero(~s.truth)
     pick_pos, pick_neg = rng.choice(pos, N_TRAIN, replace=False), rng.choice(neg, N_TRAIN, replace=False)
