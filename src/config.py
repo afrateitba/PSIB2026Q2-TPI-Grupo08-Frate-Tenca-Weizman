@@ -153,6 +153,10 @@ LESION_LINE_REL = (0.02, 0.04)
 LESION_FDOG_WINDOW_REL = 31 / 540
 LESION_FEATURES = ([f"apertura por reconstrucción {int(round(100 * r))} %" for r in LESION_LINE_REL]
                    + [f"borde asimétrico {w}" for w in ENHANCE_WIDTHS_PX])
+# Etapa 5h (plan, desvío 14.11): se agregan las dos aperturas por reconstrucción (28 mapas); el borde
+# asimétrico no sumó. Los pesos congelados en congelado-test son de los 26 mapas anteriores: el
+# archivo de pesos guarda su lista de mapas y segment_final usa esa.
+SEGMENT_FEATURES = SEGMENT_FEATURES + LESION_FEATURES[:2]
 SEGMENT_REFERENCE_FILTER = "detector de líneas"
 SEGMENT_FRACTION = 0.09        # elegida en las 5 vueltas
 # Regla del umbral, cerrada en la etapa 8 (notebooks/08_robustez.ipynb) con el

@@ -117,12 +117,12 @@ def compute_features(rgb: np.ndarray, factor: int = SEGMENT_FACTOR,
 
 
 def compute_feature_bank(rgb: np.ndarray, factor: int = SEGMENT_FACTOR) -> tuple[np.ndarray, list[str]]:
-    """Banco completo de mapas de la ronda de mejoras (etapa 5e), con textura.
+    """Banco completo de mapas de las rondas de mejoras (etapas 5e y 5h), con lesiones y textura.
 
     Devuelve (mapas estandarizados, nombres): primero SEGMENT_BASE_FEATURES,
-    después las escalas por separado y la textura.
+    después las escalas por separado, los mapas contra las lesiones y la textura.
     """
-    region, stream = _feature_stream(rgb, factor, texture=True)
+    region, stream = _feature_stream(rgb, factor, texture=True, lesion=True)
     maps = {n: _standardized(m, region) for n, m in stream}
     names = SEGMENT_BASE_FEATURES + [n for n in maps if n not in SEGMENT_BASE_FEATURES]
     return np.stack([maps[n] for n in names]), names
@@ -191,7 +191,7 @@ def _threshold(score_full: np.ndarray, fov_full: np.ndarray, fraction: float | N
 def segment_image(rgb: np.ndarray, weights: np.ndarray, fraction: float | None = SEGMENT_FRACTION,
                   value: float | None = None, features: np.ndarray | None = None,
                   return_score: bool = False, factor: int = SEGMENT_FACTOR,
-                  background: str = SEGMENT_BACKGROUND_MODE):
+                  background: str = SEGMENT_BACKGROUND_MODE, feature_names: list[str] = SEGMENT_FEATURES):
     """Máscara de vasos (booleana, del tamaño de la foto) con la combinación de filtros.
 
     `weights` son los de fit_weights / load_weights (ordenada al origen primero).
@@ -206,7 +206,7 @@ def segment_image(rgb: np.ndarray, weights: np.ndarray, fraction: float | None =
         prob = predict_logistic(features.reshape(len(features), -1).T, weights)
         prob = prob.reshape(features.shape[1:]).astype(np.float32)
     else:
-        (prob,), _, _ = feature_scores(rgb, [weights], factor, background=background)
+        (prob,), _, _ = feature_scores(rgb, [weights], factor, background=background, features=feature_names)
     prob = _full_size(prob, rgb.shape[:2])
     mask = _threshold(prob, detect_fov_robust(rgb), fraction, value)
     return (mask, prob) if return_score else mask
@@ -214,14 +214,16 @@ def segment_image(rgb: np.ndarray, weights: np.ndarray, fraction: float | None =
 
 def segment_reference(rgb: np.ndarray, fraction: float | None = SEGMENT_FRACTION,
                       value: float | None = None, features: np.ndarray | None = None,
-                      factor: int = SEGMENT_FACTOR, background: str = SEGMENT_BACKGROUND_MODE) -> np.ndarray:
+                      factor: int = SEGMENT_FACTOR, background: str = SEGMENT_BACKGROUND_MODE,
+                      feature_names: list[str] = SEGMENT_FEATURES) -> np.ndarray:
     """Referencia clásica: solo el detector de líneas sobre el verde, con la misma regla de umbral."""
     from .fov import detect_fov_robust
 
     if features is not None:
-        score = features[SEGMENT_FEATURES.index(SEGMENT_REFERENCE_FILTER)]
+        score = features[feature_names.index(SEGMENT_REFERENCE_FILTER)]
     else:
-        _, kept, _ = feature_scores(rgb, [], factor, keep=(SEGMENT_REFERENCE_FILTER,), background=background)
+        _, kept, _ = feature_scores(rgb, [], factor, keep=(SEGMENT_REFERENCE_FILTER,), background=background,
+                                    features=[SEGMENT_REFERENCE_FILTER])
         score = kept[SEGMENT_REFERENCE_FILTER]
     return _threshold(_full_size(score, rgb.shape[:2]), detect_fov_robust(rgb), fraction, value)
 
@@ -327,7 +329,8 @@ def choose_value(samples: dict[str, dict], weights: np.ndarray | None, image_ids
 
 def save_weights(weights: np.ndarray, path: Path = WEIGHTS_PATH, note: str = "",
                  fraction: float = SEGMENT_FRACTION, value: float | None = None,
-                 background: str = SEGMENT_BACKGROUND_MODE) -> None:
+                 background: str = SEGMENT_BACKGROUND_MODE,
+                 feature_names: list[str] = SEGMENT_FEATURES) -> None:
     """Guarda los pesos con los nombres de los mapas, para que el script los pueda usar.
 
     También guarda la fracción y el valor fijo elegidos con las mismas imágenes
@@ -336,18 +339,23 @@ def save_weights(weights: np.ndarray, path: Path = WEIGHTS_PATH, note: str = "",
     pesos solo valen con ese modo.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    data = {"features": SEGMENT_FEATURES, "intercept": float(weights[0]),
+    data = {"features": list(feature_names), "intercept": float(weights[0]),
             "coefficients": [float(w) for w in weights[1:]], "fraction": fraction, "value": value,
             "background": background, "note": note}
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 def load_weights(path: Path = WEIGHTS_PATH) -> np.ndarray:
-    """Pesos guardados con save_weights. Falla si los mapas no coinciden con SEGMENT_FEATURES."""
+    """Pesos guardados con save_weights, en el orden de sus mapas (load_feature_names)."""
     data = json.loads(Path(path).read_text(encoding="utf-8"))
-    if data["features"] != SEGMENT_FEATURES:
-        raise ValueError("Los pesos guardados son de otros mapas que los de config.SEGMENT_FEATURES")
+    if len(data["coefficients"]) != len(data["features"]):
+        raise ValueError("El archivo de pesos tiene distinta cantidad de coeficientes que de mapas")
     return np.array([data["intercept"], *data["coefficients"]])
+
+
+def load_feature_names(path: Path = WEIGHTS_PATH) -> list[str]:
+    """Mapas con que se ajustaron los pesos guardados (26 en congelado-test; los de config después de 5h)."""
+    return list(json.loads(Path(path).read_text(encoding="utf-8"))["features"])
 
 
 MASK_CACHE = ROOT / "results" / "cache" / "mascaras_cv"
@@ -435,8 +443,8 @@ def segment_final(rgb: np.ndarray, reference: bool = False, return_score: bool =
     from .config import SEGMENT_THRESHOLD_RULE
 
     fraction, value = final_threshold(SEGMENT_THRESHOLD_RULE, load_threshold(path), reference)
-    background = load_background(path)
+    background, names = load_background(path), load_feature_names(path)
     if reference:
         return segment_reference(rgb, fraction=fraction, value=value, background=background)
     return segment_image(rgb, load_weights(path), fraction=fraction, value=value,
-                         return_score=return_score, background=background)
+                         return_score=return_score, background=background, feature_names=names)

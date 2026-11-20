@@ -124,3 +124,14 @@ def test_segment_image_at_full_resolution():
     mask = segment_image(rgb, w, fraction=0.05, factor=1)
     assert mask.shape == rgb.shape[:2]
     assert mask[vessels].mean() > 0.5
+
+
+def test_pesos_con_su_lista_de_mapas(tmp_path):
+    """Un archivo de pesos de otros mapas (los 26 de congelado-test) se lee con su propia lista."""
+    import json
+    from src.pipeline import load_feature_names
+    names = [f"mapa {i}" for i in range(26)]
+    (tmp_path / "v1.json").write_text(json.dumps({"features": names, "intercept": 0.5,
+                                                  "coefficients": list(range(26))}), encoding="utf-8")
+    assert load_feature_names(tmp_path / "v1.json") == names
+    assert len(load_weights(tmp_path / "v1.json")) == 27
