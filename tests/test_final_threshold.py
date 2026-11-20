@@ -34,3 +34,14 @@ def test_guardar_y_leer_el_valor_de_la_referencia(tmp_path):
     saved = load_threshold(path)
     assert saved == {"fraction": 0.09, "value": 0.857, "reference_value": 1.5}
     assert json.loads(path.read_text(encoding="utf-8"))["value"] == 0.857   # lo demás no cambia
+
+def test_modo_del_fondo_guardado(tmp_path):
+    """Los pesos sin modo guardado (anteriores a la etapa 5g) se usan con la resta."""
+    from src.pipeline import load_background
+
+    path = tmp_path / "pesos.json"
+    path.write_text(json.dumps({"features": [], "intercept": 0, "coefficients": []}), encoding="utf-8")
+    assert load_background(path) == "resta"
+    path.write_text(json.dumps({"features": [], "intercept": 0, "coefficients": [], "background": "división"}),
+                    encoding="utf-8")
+    assert load_background(path) == "división"

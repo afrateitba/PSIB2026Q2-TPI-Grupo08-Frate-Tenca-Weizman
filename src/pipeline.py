@@ -307,16 +307,19 @@ def choose_value(samples: dict[str, dict], weights: np.ndarray | None, image_ids
 
 
 def save_weights(weights: np.ndarray, path: Path = WEIGHTS_PATH, note: str = "",
-                 fraction: float = SEGMENT_FRACTION, value: float | None = None) -> None:
+                 fraction: float = SEGMENT_FRACTION, value: float | None = None,
+                 background: str = SEGMENT_BACKGROUND_MODE) -> None:
     """Guarda los pesos con los nombres de los mapas, para que el script los pueda usar.
 
     También guarda la fracción y el valor fijo elegidos con las mismas imágenes
-    (la regla se cierra en la etapa 8; plan, desvíos 14.5 y 14.7).
+    (la regla se cierra en la etapa 8; plan, desvíos 14.5 y 14.7) y el modo de
+    normalización del fondo con el que se calcularon los mapas (etapa 5g): los
+    pesos solo valen con ese modo.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     data = {"features": SEGMENT_FEATURES, "intercept": float(weights[0]),
             "coefficients": [float(w) for w in weights[1:]], "fraction": fraction, "value": value,
-            "note": note}
+            "background": background, "note": note}
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
@@ -372,6 +375,15 @@ def final_threshold(rule: str, saved: dict, reference: bool = False) -> tuple[fl
     return None, float(saved[key])
 
 
+def load_background(path: Path = WEIGHTS_PATH) -> str:
+    """Modo de normalización del fondo con el que se ajustaron los pesos guardados.
+
+    Los pesos anteriores a la etapa 5g no lo guardaban: se ajustaron con la resta.
+    """
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    return data.get("background", "resta")
+
+
 def load_threshold(path: Path = WEIGHTS_PATH) -> dict:
     """Fracción y valores fijos guardados junto con los pesos (save_weights, save_reference_value)."""
     data = json.loads(Path(path).read_text(encoding="utf-8"))
@@ -396,12 +408,16 @@ def segment_final(rgb: np.ndarray, reference: bool = False, return_score: bool =
 
     Con `reference`, la referencia clásica con la misma regla. Es la función
     que usan el script y la evaluación en prueba; segment_image y
-    segment_reference siguen sirviendo con pesos y umbrales explícitos.
+    segment_reference siguen sirviendo con pesos y umbrales explícitos. La
+    normalización del fondo es la guardada con los pesos (load_background), no
+    la de config: así los pesos congelados se usan siempre con el modo con que
+    se ajustaron.
     """
     from .config import SEGMENT_THRESHOLD_RULE
 
     fraction, value = final_threshold(SEGMENT_THRESHOLD_RULE, load_threshold(path), reference)
+    background = load_background(path)
     if reference:
-        return segment_reference(rgb, fraction=fraction, value=value)
+        return segment_reference(rgb, fraction=fraction, value=value, background=background)
     return segment_image(rgb, load_weights(path), fraction=fraction, value=value,
-                         return_score=return_score)
+                         return_score=return_score, background=background)

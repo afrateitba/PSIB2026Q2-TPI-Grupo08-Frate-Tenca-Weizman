@@ -129,9 +129,12 @@ EVAL_BG_FRACTION = 0.2
 SEGMENT_FACTOR = 2
 SEGMENT_BACKGROUND_SIGMA_REL = 0.02
 # Modelo de la corrección del fondo (preprocess.normalizar_fondo): "resta" (iluminación
-# aditiva, la del algoritmo congelado), "división" o "luminosidad y contraste"
-# (iluminación multiplicativa). Se decide en notebooks/05g_normalizacion.ipynb.
-SEGMENT_BACKGROUND_MODE = "resta"
+# aditiva), "división" o "luminosidad y contraste" (iluminación multiplicativa).
+# Etapa 5g (notebooks/05g_normalizacion.ipynb; plan, desvío 14.11): se adopta la división
+# (Matthews +0,021 en validación cruzada, mejor en 29 de 30 imágenes). Es el modo con que se
+# calculan los mapas para entrenar; segment_final usa el guardado con los pesos (load_background),
+# así que los pesos congelados en congelado-test siguen usándose con la resta.
+SEGMENT_BACKGROUND_MODE = "división"
 SEGMENT_BASE_FEATURES = ["verde corregido", "sombrero de copa", "detector de líneas",
                          "filtro adaptado", "Gabor", "Frangi"]
 # Ronda de mejoras (etapa 5e, notebooks/05e_ronda_mejoras.ipynb; plan, desvío 14.6):
