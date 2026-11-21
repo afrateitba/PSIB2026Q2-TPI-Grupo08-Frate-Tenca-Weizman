@@ -50,10 +50,10 @@ def _feature_stream(rgb: np.ndarray, factor: int, texture: bool = False,
     from .enhance import (apply_filter, fdog_edge, frangi_filter, gabor_filter, glcm_texture, line_detector,
                           line_opening_reconstruction, matched_filter, prepare_maps, quantize, scale_px,
                           sigma_for_width)
-    from .preprocess import normalizar_fondo
+    from .preprocess import preprocesar_verde
 
     maps, region, d = prepare_maps(rgb, ["Verde"], factor)
-    green = normalizar_fondo(maps["Verde"], region, SEGMENT_BACKGROUND_SIGMA_REL * d, background)
+    green = preprocesar_verde(maps["Verde"], region, d, background, SEGMENT_BACKGROUND_SIGMA_REL)
     del maps
 
     def generate():

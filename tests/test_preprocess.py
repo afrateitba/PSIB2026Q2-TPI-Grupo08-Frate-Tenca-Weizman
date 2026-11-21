@@ -74,3 +74,21 @@ def test_campo_uniforme_da_cero(modo):
 def test_modo_desconocido():
     with pytest.raises(ValueError):
         normalizar_fondo(np.zeros((5, 5)), np.ones((5, 5), bool), 1, "otro")
+
+
+def test_relleno_de_exudados_rellena_la_mancha_y_respeta_vaso_y_disco():
+    """Una mancha clara se rellena con el nivel del fondo; el vaso (oscuro) y el disco (la zona más clara) quedan igual."""
+    from src.preprocess import rellenar_exudados
+    rng = np.random.default_rng(0)
+    n = 200
+    yy, xx = np.mgrid[:n, :n]
+    g = 100 + rng.normal(0, 1, (n, n))
+    g[(yy - 40) ** 2 + (xx - 40) ** 2 <= 12 ** 2] = 200       # disco óptico
+    g[(yy - 140) ** 2 + (xx - 140) ** 2 <= 4 ** 2] = 150      # exudado
+    g[:, 150:153] = 60                                          # vaso al lado
+    campo = np.ones((n, n), bool)
+    out, mask = rellenar_exudados(-g, campo, diametro=200)
+    assert mask[140, 140] and not mask[40, 40]                  # rellena el exudado, no el disco
+    assert not mask[:, 150:153].any()                          # nunca tapa el vaso
+    assert abs(-out[140, 140] - 100) < 10                       # queda al nivel del fondo
+    np.testing.assert_array_equal(out[:, 150:153], -g[:, 150:153])
