@@ -78,9 +78,10 @@ def _threshold_samples(share, bg_weight):
     ref = SEGMENT_FEATURES.index("detector de líneas")
     samples = {}
     for i in ("a", "b"):
-        y = rng.random(4000) < share
-        x = rng.normal(0, 1, (y.size, len(SEGMENT_FEATURES)))
-        x[:, ref] = np.where(y, 3.0, -3.0) + rng.normal(0, 0.3, y.size)
+        y = rng.random(20000) < share
+        sep = np.where(y, 3.0, -3.0) + rng.normal(0, 0.3, y.size)
+        x = rng.normal(0, 1, (y.size, len(SEGMENT_FEATURES)))   # al final: no cambia y ni sep
+        x[:, ref] = sep
         samples[i] = {"x_thr": x, "y_thr": y, "w_thr": np.where(y, 1.0, bg_weight)}
     return samples, ref
 

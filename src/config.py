@@ -185,6 +185,10 @@ PATH_FEATURES = [f"apertura por caminos {int(round(100 * r))} %" for r in PATH_L
 HESSIAN_FEATURES = [f"hessiano λ{k} {w}" for w in ENHANCE_WIDTHS_PX for k in (1, 2)]
 NEW_FEATURE_FAMILIES = {"fase": PHASE_FEATURES, "B-COSFIRE": COSFIRE_FEATURES,
                         "caminos": PATH_FEATURES, "hessiano": HESSIAN_FEATURES}
+# Etapa 5l (desvío 14.11): se agrega B-COSFIRE por la regla (31 mapas), con un efecto mínimo
+# (vasos finos +0,2 puntos). La simetría de fase sube la precisión (+1,8 puntos) pero baja la línea
+# central; las aperturas por caminos bajan los finos; el hessiano no excluye el cero.
+SEGMENT_FEATURES = SEGMENT_FEATURES + COSFIRE_FEATURES
 SEGMENT_REFERENCE_FILTER = "detector de líneas"
 SEGMENT_FRACTION = 0.09        # elegida en las 5 vueltas
 # Regla del umbral, cerrada en la etapa 8 (notebooks/08_robustez.ipynb) con el

@@ -148,14 +148,18 @@ def compute_features(rgb: np.ndarray, factor: int = SEGMENT_FACTOR,
 
 
 def compute_feature_bank(rgb: np.ndarray, factor: int = SEGMENT_FACTOR) -> tuple[np.ndarray, list[str]]:
-    """Banco completo de mapas de las rondas de mejoras (etapas 5e y 5h), con lesiones y textura.
+    """Banco completo de mapas de las rondas de mejoras (etapas 5e, 5h y 5l), con lesiones, las
+    familias nuevas y la textura.
 
-    Devuelve (mapas estandarizados, nombres): primero SEGMENT_BASE_FEATURES,
-    después las escalas por separado, los mapas contra las lesiones y la textura.
+    Devuelve (mapas estandarizados, nombres): primero SEGMENT_FEATURES, en su
+    orden, y después el resto en el orden en que se calculan.
     """
-    region, stream = _feature_stream(rgb, factor, texture=True, lesion=True)
+    from .config import NEW_FEATURE_FAMILIES
+
+    region, stream = _feature_stream(rgb, factor, texture=True, lesion=True,
+                                     extra=frozenset(NEW_FEATURE_FAMILIES))
     maps = {n: _standardized(m, region) for n, m in stream}
-    names = SEGMENT_BASE_FEATURES + [n for n in maps if n not in SEGMENT_BASE_FEATURES]
+    names = SEGMENT_FEATURES + [n for n in maps if n not in SEGMENT_FEATURES]
     return np.stack([maps[n] for n in names]), names
 
 
