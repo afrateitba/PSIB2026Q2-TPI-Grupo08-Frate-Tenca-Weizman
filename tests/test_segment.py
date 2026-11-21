@@ -54,3 +54,47 @@ def test_limpiar_por_forma_quita_manchas_redondas():
     assert limpia[10:12, 5:100].all()         # el vaso queda
     assert not limpia[50, 30]                 # la mancha chica se va
     assert limpia[50, 90]                     # la grande supera area_max y queda
+
+
+def test_histeresis_valor_recupera_lo_conectado_y_no_lo_suelto():
+    from src.segment import segmentar_histeresis_valor
+    mapa = np.zeros((30, 30), np.float32)
+    mapa[10, 2:20] = 0.95             # vaso seguro
+    mapa[10, 20:28] = 0.6             # continuación débil, conectada
+    mapa[11:13, 28] = 0.6             # sigue en diagonal
+    mapa[25, 5:9] = 0.6               # mancha débil suelta
+    campo = np.ones_like(mapa, bool)
+    m = segmentar_histeresis_valor(mapa, campo, alto=0.9, bajo=0.5)
+    assert m[10, 2:28].all() and m[11:13, 28].all()
+    assert not m[25, 5:9].any()
+    np.testing.assert_array_equal(segmentar_histeresis_valor(mapa, campo, 0.5, 0.5), mapa > 0.5)
+
+
+def test_conteos_histeresis_coinciden_con_las_mascaras():
+    from scipy.ndimage import gaussian_filter
+
+    from src.metrics import confusion, matthews
+    from src.segment import conteos_histeresis, matthews_conteos, segmentar_histeresis_valor
+    rng = np.random.default_rng(1)
+    mapa = gaussian_filter(rng.random((80, 90)), 2).astype(np.float32)
+    mapa = (mapa - mapa.min()) / np.ptp(mapa)
+    verdad = gaussian_filter(rng.random((80, 90)), 2) > 0.52
+    campo = np.zeros_like(verdad); campo[5:75, 5:85] = True
+    region = np.zeros_like(verdad); region[3:70, 8:88] = True
+    altos, bajos = np.array([0.5, 0.6, 0.7, 0.8]), np.array([0.3, 0.6, 0.75])
+    c = conteos_histeresis(mapa, campo, verdad, region, altos, bajos)
+    for b, bajo in enumerate(bajos):
+        for a, alto in enumerate(altos):
+            if bajo > alto:
+                assert np.isnan(c["tp"][b, a])
+                continue
+            k = confusion(segmentar_histeresis_valor(mapa, campo, alto, bajo), verdad, region)
+            assert c["tp"][b, a] == k["tp"] and c["marcados"][b, a] == k["tp"] + k["fp"]
+    for a, alto in enumerate(altos):
+        m = (mapa > alto) & campo
+        k = confusion(m, verdad, region)
+        assert c["tp_fijo"][a] == k["tp"] and c["marcados_fijo"][a] == k["tp"] + k["fp"]
+        assert np.isclose(matthews_conteos(c["tp_fijo"][a], c["marcados_fijo"][a], c["positivos"], c["total"]),
+                          matthews(m, verdad, region))
+    # con bajo = alto, la histéresis es el valor fijo
+    assert c["tp"][1, 1] == c["tp_fijo"][1]
