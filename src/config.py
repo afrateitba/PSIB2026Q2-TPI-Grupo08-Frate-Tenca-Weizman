@@ -189,6 +189,11 @@ NEW_FEATURE_FAMILIES = {"fase": PHASE_FEATURES, "B-COSFIRE": COSFIRE_FEATURES,
 # (vasos finos +0,2 puntos). La simetría de fase sube la precisión (+1,8 puntos) pero baja la línea
 # central; las aperturas por caminos bajan los finos; el hessiano no excluye el cero.
 SEGMENT_FEATURES = SEGMENT_FEATURES + COSFIRE_FEATURES
+# Etapa 5m (notebooks/05m_l1.ipynb; desvío 14.11): los pesos se ajustan con penalidad L1 sobre estos 31
+# mapas (pipeline.fit_weights_l1: λ por validación cruzada por personas, regla de un error estándar).
+# Quedan 13 a 15 mapas por vuelta; Matthews −0,0025 y vasos finos −1,8 puntos, dentro del margen. La lista
+# final sale del ajuste con las 30 imágenes (versión 2) y se guarda con los pesos.
+SEGMENT_FIT = "L1"
 SEGMENT_REFERENCE_FILTER = "detector de líneas"
 SEGMENT_FRACTION = 0.09        # elegida en las 5 vueltas
 # Regla del umbral, cerrada en la etapa 8 (notebooks/08_robustez.ipynb) con el
