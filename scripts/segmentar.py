@@ -3,11 +3,14 @@
 Uso:  python scripts/segmentar.py foto.jpg mascara.png
       python scripts/segmentar.py foto.jpg mascara.png --superpuesta vista.png
       python scripts/segmentar.py foto.jpg mascara.png --referencia   # solo el detector de líneas
+      python scripts/segmentar.py foto.jpg mascara.png --v2           # versión 2 (etapas 5g a 5m)
 
 La máscara se guarda en blanco (vaso) y negro (fondo), del mismo tamaño que la
 foto. No necesita la máscara del campo de visión: la detecta sola. Los pesos
-de la combinación y los umbrales se leen de models/pesos_combinacion.json, y
-la regla del umbral (valor fijo, etapa 8) de config.SEGMENT_THRESHOLD_RULE.
+de la combinación y los umbrales se leen de models/pesos_combinacion.json (la
+versión congelada y evaluada en prueba) o, con --v2, de models/pesos_v2.json; la
+regla del umbral (valor fijo, etapa 8), de config.SEGMENT_THRESHOLD_RULE. Cada
+archivo de pesos guarda sus mapas y su preprocesamiento.
 """
 import argparse
 import sys
@@ -18,7 +21,7 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.pipeline import WEIGHTS_PATH, segment_final  # noqa: E402
+from src.pipeline import WEIGHTS_PATH, WEIGHTS_V2_PATH, segment_final  # noqa: E402
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -27,7 +30,10 @@ if __name__ == "__main__":
     parser.add_argument("--superpuesta", type=Path, help="guarda también la foto con los vasos en verde")
     parser.add_argument("--referencia", action="store_true", help="usa solo el detector de líneas")
     parser.add_argument("--pesos", type=Path, default=WEIGHTS_PATH)
+    parser.add_argument("--v2", action="store_true", help="usa la versión 2 (models/pesos_v2.json)")
     args = parser.parse_args()
+    if args.v2:
+        args.pesos = WEIGHTS_V2_PATH
 
     if not args.pesos.exists():
         sys.exit(f"Faltan los pesos y umbrales en {args.pesos}.")

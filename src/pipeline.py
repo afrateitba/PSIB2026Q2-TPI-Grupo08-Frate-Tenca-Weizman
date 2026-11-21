@@ -29,6 +29,7 @@ from .config import (EVAL_BG_FRACTION, ROOT, SEGMENT_BACKGROUND_MODE, SEGMENT_BA
                      SEGMENT_REFERENCE_FILTER, SEED)
 
 WEIGHTS_PATH = ROOT / "models" / "pesos_combinacion.json"
+WEIGHTS_V2_PATH = ROOT / "models" / "pesos_v2.json"   # versión 2 (etapas 5g a 5m; notebooks/05n_version2.ipynb)
 N_TRAIN = 20_000    # píxeles de vaso y de fondo por imagen para ajustar los pesos
 N_THR = 30_000      # píxeles de la muestra fija por imagen para elegir la fracción
 FRACTIONS = np.round(np.arange(0.05, 0.20, 0.01), 2)   # fracciones candidatas
@@ -36,7 +37,7 @@ FRACTIONS = np.round(np.arange(0.05, 0.20, 0.01), 2)   # fracciones candidatas
 
 def _feature_stream(rgb: np.ndarray, factor: int, texture: bool = False,
                     background: str = SEGMENT_BACKGROUND_MODE, lesion: bool = False,
-                    extra: frozenset = frozenset()):
+                    extra: frozenset = frozenset(), wanted=None):
     """Mapas sin estandarizar, de a uno, a 1/`factor`: (campo detectado, generador de (nombre, mapa)).
 
     Genera los de SEGMENT_BASE_FEATURES (los orientados como la mayor respuesta
@@ -47,6 +48,8 @@ def _feature_stream(rgb: np.ndarray, factor: int, texture: bool = False,
     a resolución completa. `background` es el modo de preprocess.preprocesar_verde;
     con `lesion`, también los mapas contra las lesiones (config.LESION_FEATURES), y
     con `extra`, las familias de config.NEW_FEATURE_FAMILIES que nombra (etapa 5l).
+    Con `wanted` (nombres de mapas), solo calcula lo necesario para esos mapas:
+    así los que L1 deja en cero (etapa 5m) no se calculan. Sin `wanted`, todos.
     """
     from . import config as c
     from .enhance import (apply_filter, bcosfire, fdog_edge, frangi_filter, gabor_filter, glcm_texture,
@@ -58,10 +61,15 @@ def _feature_stream(rgb: np.ndarray, factor: int, texture: bool = False,
     green = preprocesar_verde(maps["Verde"], region, d, background, SEGMENT_BACKGROUND_SIGMA_REL)
     del maps
 
+    def need(name):
+        return wanted is None or name in wanted
+
     def generate():
         yield "verde corregido", green
-        yield "sombrero de copa", apply_filter("sombrero de copa", green, d)
-        yield "Frangi", apply_filter("Frangi", green, d)
+        if need("sombrero de copa"):
+            yield "sombrero de copa", apply_filter("sombrero de copa", green, d)
+        if need("Frangi"):
+            yield "Frangi", apply_filter("Frangi", green, d)
         best = {}
         for w, rel in zip(c.ENHANCE_WIDTHS_PX, c.ENHANCE_WIDTHS_REL):
             px = scale_px(rel, d)
@@ -71,18 +79,24 @@ def _feature_stream(rgb: np.ndarray, factor: int, texture: bool = False,
                       "Gabor": lambda: gabor_filter(green, s, c.ENHANCE_GABOR_ELONGATION),
                       "Frangi": lambda: frangi_filter(green, [s])}
             for name, make in makers.items():
+                want_scale, want_best = need(f"{name} {w}"), name != "Frangi" and need(name)
+                if not (want_scale or want_best):
+                    continue
                 m = make()
-                yield f"{name} {w}", m
-                if name != "Frangi":
+                if want_scale:
+                    yield f"{name} {w}", m
+                if want_best:
                     best[name] = m if name not in best else np.maximum(best[name], m)
         yield from best.items()
         if lesion:
             for rel, name in zip(c.LESION_LINE_REL, c.LESION_FEATURES):
-                yield name, line_opening_reconstruction(green, max(3.0, scale_px(rel, d)))
+                if need(name):
+                    yield name, line_opening_reconstruction(green, max(3.0, scale_px(rel, d)))
             window = int(round(scale_px(c.LESION_FDOG_WINDOW_REL, d)))
             for w, rel in zip(c.ENHANCE_WIDTHS_PX, c.ENHANCE_WIDTHS_REL):
-                s = max(sigma_for_width(scale_px(rel, d)), c.ENHANCE_SIGMA_MIN_PX)
-                yield f"borde asimétrico {w}", fdog_edge(green, s, c.ENHANCE_MATCHED_LENGTH * s, window)
+                if need(f"borde asimétrico {w}"):
+                    s = max(sigma_for_width(scale_px(rel, d)), c.ENHANCE_SIGMA_MIN_PX)
+                    yield f"borde asimétrico {w}", fdog_edge(green, s, c.ENHANCE_MATCHED_LENGTH * s, window)
         if "fase" in extra:
             lams = [max(c.PHASE_WAVELENGTH_MIN_PX, 2 * scale_px(rel, d)) for rel in c.ENHANCE_WIDTHS_REL]
             total, per_scale = phase_symmetry(green, lams)
@@ -94,14 +108,19 @@ def _feature_stream(rgb: np.ndarray, factor: int, texture: bool = False,
             def scaled(p, f):
                 return {"sigma": p["sigma"] * f, "rhos": [r * f for r in p["rhos"]],
                         "sigma0": p["sigma0"] * f, "alpha": p["alpha"]}
-            yield c.COSFIRE_FEATURES[0], bcosfire(green, **scaled(c.COSFIRE_SYMMETRIC, k))
-            yield c.COSFIRE_FEATURES[1], bcosfire(green, **scaled(c.COSFIRE_SYMMETRIC, k * c.COSFIRE_FINE_FACTOR))
-            yield c.COSFIRE_FEATURES[2], bcosfire(green, **scaled(c.COSFIRE_ASYMMETRIC, k), symmetric=False)
+            if need(c.COSFIRE_FEATURES[0]):
+                yield c.COSFIRE_FEATURES[0], bcosfire(green, **scaled(c.COSFIRE_SYMMETRIC, k))
+            if need(c.COSFIRE_FEATURES[1]):
+                yield c.COSFIRE_FEATURES[1], bcosfire(green, **scaled(c.COSFIRE_SYMMETRIC, k * c.COSFIRE_FINE_FACTOR))
+            if need(c.COSFIRE_FEATURES[2]):
+                yield c.COSFIRE_FEATURES[2], bcosfire(green, **scaled(c.COSFIRE_ASYMMETRIC, k), symmetric=False)
         if "caminos" in extra:
             lengths = [max(3.0, scale_px(r, d)) for r in c.PATH_LENGTH_REL]
             yield from zip(c.PATH_FEATURES, path_openings(green, region, lengths))
         if "hessiano" in extra:
             for w, rel in zip(c.ENHANCE_WIDTHS_PX, c.ENHANCE_WIDTHS_REL):
+                if not (need(f"hessiano λ1 {w}") or need(f"hessiano λ2 {w}")):
+                    continue
                 l1, l2 = hessian_eigenvalues(green, max(sigma_for_width(scale_px(rel, d)), c.ENHANCE_SIGMA_MIN_PX))
                 yield f"hessiano λ1 {w}", l1
                 yield f"hessiano λ2 {w}", l2
@@ -142,7 +161,7 @@ def compute_features(rgb: np.ndarray, factor: int = SEGMENT_FACTOR,
     resolución completa conviene feature_scores.
     """
     region, stream = _feature_stream(rgb, factor, any(n.startswith("textura") for n in features),
-                                     background, _wants_lesion(features), _families(features))
+                                     background, _wants_lesion(features), _families(features), set(features))
     maps = {n: _standardized(m, region) for n, m in stream if n in features}
     return np.stack([maps[n] for n in features]), region
 
@@ -174,7 +193,7 @@ def feature_scores(rgb: np.ndarray, weight_sets: list[np.ndarray], factor: int =
     compute_features + predict_logistic sin tener los 26 mapas en memoria.
     """
     region, stream = _feature_stream(rgb, factor, background=background, lesion=_wants_lesion(features),
-                                     extra=_families(features))
+                                     extra=_families(features), wanted=set(features) | set(keep))
     index = {n: j for j, n in enumerate(features)}
     lins = [np.full(region.shape, w[0], dtype=np.float64) for w in weight_sets]
     kept = {}
@@ -203,7 +222,8 @@ def sample_features(image_id: str, factor: int = SEGMENT_FACTOR,
 
     s = load_sample(image_id)
     region, stream = _feature_stream(load_image(image_id), factor, background=background,
-                                     lesion=_wants_lesion(features), extra=_families(features))
+                                     lesion=_wants_lesion(features), extra=_families(features),
+                                     wanted=set(features))
     cols = {n: sample_values(_standardized(m, region), s).astype(np.float32)
             for n, m in stream if n in features}
     return np.stack([cols[n] for n in features], axis=1)
