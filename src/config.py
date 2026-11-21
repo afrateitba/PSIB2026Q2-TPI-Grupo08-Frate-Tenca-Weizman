@@ -135,6 +135,9 @@ SEGMENT_BACKGROUND_SIGMA_REL = 0.02
 # calculan los mapas para entrenar; segment_final usa el guardado con los pesos (load_background),
 # así que los pesos congelados en congelado-test siguen usándose con la resta.
 SEGMENT_BACKGROUND_MODE = "división"
+# Etapa 5i (notebooks/05i_exudados.ipynb; desvío 14.11): antes de normalizar se rellenan los exudados
+# (preprocess.rellenar_exudados; Annunziata et al., 2016). Matthews +0,0013, en el límite de la regla.
+SEGMENT_BACKGROUND_MODE = SEGMENT_BACKGROUND_MODE + " + relleno de exudados"
 SEGMENT_BASE_FEATURES = ["verde corregido", "sombrero de copa", "detector de líneas",
                          "filtro adaptado", "Gabor", "Frangi"]
 # Ronda de mejoras (etapa 5e, notebooks/05e_ronda_mejoras.ipynb; plan, desvío 14.6):
