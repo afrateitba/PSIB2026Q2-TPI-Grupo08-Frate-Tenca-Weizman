@@ -163,6 +163,28 @@ LESION_FEATURES = ([f"apertura por reconstrucción {int(round(100 * r))} %" for 
 # asimétrico no sumó. Los pesos congelados en congelado-test son de los 26 mapas anteriores: el
 # archivo de pesos guarda su lista de mapas y segment_final usa esa.
 SEGMENT_FEATURES = SEGMENT_FEATURES + LESION_FEATURES[:2]
+# Familias nuevas de mapas (etapa 5l, notebooks/05l_mapas_nuevos.ipynb), apuntadas a los vasos finos.
+# Se calculan sobre el verde normalizado solo si están en la lista de mapas pedida.
+# - Simetría de fase (Kovesi, 1999; Läthén et al., 2010): log-Gabor con longitud de onda 2 × ancho de
+#   cada escala de la etapa 4 (mínimo 3 píxeles), 8 orientaciones; todas las escalas juntas y cada una.
+# - B-COSFIRE (Azzopardi et al., 2015): las dos configuraciones del artículo para DRIVE (campo de unos
+#   540 píxeles), llevadas al diámetro del campo, y la simétrica a un tercio de esa escala: la base
+#   resuelve vasos unas tres veces más finos, en proporción al campo, que DRIVE.
+# - Aperturas por caminos (Talbot y Appleton, 2007): caminos de 2 % y 4 % del diámetro, los mismos
+#   largos que los segmentos rectos de la apertura por reconstrucción.
+# - Autovalores del hessiano (Niemeijer et al., 2004; Staal et al., 2004) en las escalas de la etapa 4.
+PHASE_WAVELENGTH_MIN_PX = 3.0
+PHASE_FEATURES = ["simetría de fase"] + [f"simetría de fase {w}" for w in ENHANCE_WIDTHS_PX]
+COSFIRE_DRIVE_DIAMETER = 540
+COSFIRE_SYMMETRIC = {"sigma": 2.4, "rhos": (0, 2, 4, 6, 8), "sigma0": 3.0, "alpha": 0.7}
+COSFIRE_ASYMMETRIC = {"sigma": 1.8, "rhos": tuple(range(0, 23, 2)), "sigma0": 2.0, "alpha": 0.1}
+COSFIRE_FINE_FACTOR = 1 / 3
+COSFIRE_FEATURES = ["B-COSFIRE simétrico", "B-COSFIRE simétrico fino", "B-COSFIRE asimétrico"]
+PATH_LENGTH_REL = (0.02, 0.04)
+PATH_FEATURES = [f"apertura por caminos {int(round(100 * r))} %" for r in PATH_LENGTH_REL]
+HESSIAN_FEATURES = [f"hessiano λ{k} {w}" for w in ENHANCE_WIDTHS_PX for k in (1, 2)]
+NEW_FEATURE_FAMILIES = {"fase": PHASE_FEATURES, "B-COSFIRE": COSFIRE_FEATURES,
+                        "caminos": PATH_FEATURES, "hessiano": HESSIAN_FEATURES}
 SEGMENT_REFERENCE_FILTER = "detector de líneas"
 SEGMENT_FRACTION = 0.09        # elegida en las 5 vueltas
 # Regla del umbral, cerrada en la etapa 8 (notebooks/08_robustez.ipynb) con el

@@ -284,3 +284,84 @@ def test_borde_asimetrico_alto_en_escalon_y_bajo_en_linea():
     kw = dict(sigma_px=1.5, length_px=7, window_px=15)   # ventana más ancha que el vaso
     assert fdog_edge(escalon, **kw)[50, 50] > 2 * fdog_edge(linea, **kw)[50, 50]
     assert np.allclose(fdog_edge(np.ones((n, n), np.float32), **kw), 0, atol=1e-6)   # fondo plano: 0
+
+
+# --- Familias nuevas (etapa 5l) ---------------------------------------------------------
+
+def _linea_clara(n=96, contraste=1.0, ancho=2.0):
+    yy, xx = np.mgrid[:n, :n]
+    return contraste * np.exp(-((yy - n // 2) ** 2) / (2 * (ancho / 2) ** 2))
+
+
+def test_simetria_de_fase_marca_lineas_no_bordes_y_no_depende_del_contraste():
+    from src.enhance import phase_symmetry
+    n = 96
+    escalon = np.zeros((n, n)); escalon[:, 70:] = 1.0              # un borde vertical
+    fuerte, _ = phase_symmetry(_linea_clara(n, 1.0) + escalon, [4, 8])
+    tenue, _ = phase_symmetry(_linea_clara(n, 0.2) + escalon, [4, 8])
+    centro = fuerte[n // 2, 10:60].mean()
+    assert centro > 0.3
+    assert fuerte[20:40, 69:71].mean() < 0.3 * centro              # el borde casi no responde
+    assert tenue[n // 2, 10:60].mean() > 0.6 * centro               # la línea tenue da parecido
+
+
+def test_bcosfire_prefiere_una_barra_a_una_mancha():
+    from src.enhance import bcosfire
+    n = 120
+    img = _linea_clara(n)
+    img[:, :20] = 0                                                  # barra de x = 20 al final
+    yy, xx = np.mgrid[:n, :n]
+    img += np.exp(-((yy - 20) ** 2 + (xx - 60) ** 2) / 2.0)         # mancha suelta del mismo ancho
+    r = bcosfire(img, sigma=2.0, rhos=[0, 3, 6, 9, 12], sigma0=1.0, alpha=0.1)
+    assert r[n // 2, 60] > 3 * r[20, 60]
+
+
+def _brute_paths(b):
+    """Camino más largo por cada píxel en los 4 conos, por búsqueda directa (memoizada)."""
+    from functools import lru_cache
+    rows, cols = b.shape
+    cones = [[(-1, -1), (-1, 0), (-1, 1)], [(-1, -1), (0, -1), (1, -1)],
+             [(-1, 0), (-1, 1), (0, 1)], [(-1, 0), (-1, -1), (0, -1)]]
+    best = np.zeros(b.shape, int)
+    for cone in cones:
+        @lru_cache(None)
+        def run(i, j, sign):
+            if not (0 <= i < rows and 0 <= j < cols) or not b[i, j]:
+                return 0
+            return 1 + max(run(i + sign * di, j + sign * dj, sign) for di, dj in cone)
+        for i in range(rows):
+            for j in range(cols):
+                if b[i, j]:
+                    best[i, j] = max(best[i, j], run(i, j, 1) + run(i, j, -1) - 1)
+    return best
+
+
+def test_largo_de_caminos_coincide_con_la_busqueda_directa():
+    from src.enhance import path_lengths
+    rng = np.random.default_rng(3)
+    for _ in range(5):
+        b = rng.random((9, 13)) < 0.55
+        np.testing.assert_array_equal(path_lengths(b), _brute_paths(b))
+
+
+def test_apertura_por_caminos_conserva_el_vaso_tortuoso_y_borra_la_mancha():
+    from src.enhance import line_opening_reconstruction, path_openings
+    n = 100
+    img = 0.1 * np.random.default_rng(0).random((n, n))           # fondo con algo de textura
+    x = np.arange(5, 95)
+    y = (50 + 5 * np.sin(x / 8)).round().astype(int)               # vaso fino ondulado (hasta 32°)
+    img[y, x] = 1.0
+    img[y + 1, x] = 1.0
+    img[10:15, 10:15] = 1.0                                         # mancha de 5 × 5
+    region = np.ones_like(img, bool)
+    (out,) = path_openings(img, region, [40], n_levels=6, q_low=0.5, q_high=0.99)
+    assert out[y, x].min() == out.max()                             # el vaso queda entero
+    assert out[12, 12] < out.max()                                  # la mancha no
+    recta = line_opening_reconstruction(img, 40)
+    assert recta[y, x].mean() < 0.5                                 # con segmentos rectos se pierde
+
+
+def test_autovalores_del_hessiano_en_una_linea_clara():
+    from src.enhance import hessian_eigenvalues
+    l1, l2 = hessian_eigenvalues(_linea_clara(64, ancho=4.0), sigma=2.0)
+    assert l2[32, 32] < -0.1 and abs(l1[32, 32]) < 0.05 * abs(l2[32, 32])

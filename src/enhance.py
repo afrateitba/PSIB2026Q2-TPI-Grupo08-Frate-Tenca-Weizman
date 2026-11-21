@@ -404,3 +404,212 @@ def apply_filter(name: str, m: np.ndarray, diameter: float) -> np.ndarray:
     for o in outs:
         out = o if out is None else np.maximum(out, o)
     return out
+
+# --- Familias nuevas de mapas (etapa 5l, notebooks/05l_mapas_nuevos.ipynb) -----------------
+# Todas reciben el verde normalizado (vasos claros) a la resolución de trabajo, con el exterior del
+# campo de visión ya rellenado, y devuelven un mapa del mismo tamaño.
+
+def phase_symmetry(m: np.ndarray, wavelengths, n_orient: int = 8, sigma_f: float = 0.55,
+                   theta_on_sigma: float = 1.2) -> tuple[np.ndarray, list[np.ndarray]]:
+    """Simetría de fase para estructuras claras (Kovesi, 1999), con filtros log-Gabor en cuadratura.
+
+    Para cada longitud de onda λ y orientación θ, un filtro log-Gabor de un
+    solo lado en frecuencia da la respuesta par e (un detector de líneas) y la
+    impar o (un detector de bordes). En el centro de una línea clara e > 0 y
+    o ≈ 0; en un borde, al revés. La medida es
+        Σ_θ [Σ_λ (e − |o|) − T_θ]⁺ / (Σ_θ Σ_λ √(e² + o²) + ε),
+    que no depende del contraste: un vaso tenue da casi lo mismo que uno
+    marcado (Läthén, Jonasson y Borga, 2010, usan la fase local por eso). T_θ
+    descuenta la respuesta típica del fondo: la mediana de la amplitud en cada
+    escala (los vasos son una minoría de los píxeles), y ε es el 1 % de la
+    mediana de la amplitud total. Devuelve (todas las escalas juntas, una por
+    escala con la misma fórmula).
+    """
+    from scipy import fft
+
+    m = np.asarray(m, dtype=np.float64)
+    rows, cols = m.shape
+    spectrum = fft.fft2(m - m.mean())
+    fy = fft.fftfreq(rows)[:, None]
+    fx = fft.fftfreq(cols)[None, :]
+    radius = np.hypot(fx, fy)
+    radius[0, 0] = 1.0
+    angle = np.arctan2(-fy, fx)
+    sigma_theta = np.pi / n_orient / theta_on_sigma
+    num_all = np.zeros_like(m)
+    amp_all = np.zeros_like(m)
+    per_scale = []
+    for lam in wavelengths:
+        radial = np.exp(-np.log(radius * lam) ** 2 / (2 * np.log(sigma_f) ** 2))
+        radial[0, 0] = 0.0
+        num_s = np.zeros_like(m)
+        amp_s = np.zeros_like(m)
+        for k in range(n_orient):
+            theta = k * np.pi / n_orient
+            d = np.abs(np.arctan2(np.sin(angle - theta), np.cos(angle - theta)))
+            resp = fft.ifft2(spectrum * radial * np.exp(-d ** 2 / (2 * sigma_theta ** 2)))
+            e, o = resp.real, resp.imag
+            amp = np.hypot(e, o)
+            t = np.median(amp)
+            num_s += np.maximum(e - np.abs(o) - t, 0.0)
+            amp_s += amp
+            num_all += np.maximum(e - np.abs(o) - t, 0.0)
+            amp_all += amp
+        per_scale.append((num_s / (amp_s + 0.01 * np.median(amp_s))).astype(np.float32))
+    return (num_all / (amp_all + 0.01 * np.median(amp_all))).astype(np.float32), per_scale
+
+
+def bcosfire(m: np.ndarray, sigma: float, rhos, sigma0: float, alpha: float,
+             symmetric: bool = True, n_orient: int | None = None) -> np.ndarray:
+    """Filtro B-COSFIRE para barras claras (Azzopardi, Strisciuglio, Vento y Petkov, 2015).
+
+    1. Diferencia de gaussianas con centro claro (σ/2 menos σ), rectificada.
+    2. Para cada distancia ρ, la respuesta se "difunde" con un máximo
+       ponderado por una gaussiana de desvío σ' = σ0 + α·ρ (tolerancia a la
+       posición, que crece con la distancia). Se aproxima en escalones: el
+       máximo de g(r)·(máximo local de radio r) para r = 0, σ'/2, σ', 3σ'/2 y
+       2σ', con g(r) = exp(−r² / 2σ'²).
+    3. Para cada orientación θ, media geométrica ponderada (pesos
+       exp(−ρ² / 2σ̂²), σ̂ = ρ_max / 3) de las respuestas tomadas a distancia ρ
+       a lo largo de θ: a los dos lados del punto (simétrico, responde a lo
+       largo de un vaso) o a uno solo (asimétrico, responde también en las
+       terminaciones de los vasos). Es un "y": hace falta respuesta en todos
+       los puntos, así que una mancha no basta.
+    4. El máximo entre orientaciones: 12 en 180° (simétrico) o 24 en 360°.
+    """
+    m = np.asarray(m, dtype=np.float64)
+    dog = np.maximum(ndi.gaussian_filter(m, 0.5 * sigma) - ndi.gaussian_filter(m, sigma), 0.0)
+    eps = 1e-3 * max(float(np.quantile(dog, 0.99)), 1e-12)
+    rhos = [float(r) for r in rhos]
+    blurred = {}
+    for r in sorted(set(rhos)):
+        sp = sigma0 + alpha * r
+        spread = dog.copy()
+        for k in range(1, 5):
+            radius = int(round(k * sp / 2))
+            if radius > 0:
+                spread = np.maximum(spread, np.exp(-(k / 2) ** 2 / 2) * ndi.maximum_filter(dog, size=2 * radius + 1))
+        blurred[r] = np.log(spread + eps)
+    s_hat = max(rhos) / 3 if max(rhos) > 0 else 1.0
+    n_orient = n_orient or (12 if symmetric else 24)
+    span = np.pi if symmetric else 2 * np.pi
+    best = np.full(m.shape, -np.inf)
+    for k in range(n_orient):
+        theta = k * span / n_orient
+        points = []
+        for r in rhos:
+            angles = [theta, theta + np.pi] if (symmetric and r > 0) else [theta]
+            points += [(r, a) for a in angles]
+        acc = np.zeros_like(m)
+        wsum = 0.0
+        for r, a in points:
+            w = np.exp(-r ** 2 / (2 * s_hat ** 2))
+            dy, dx = -r * np.sin(a), r * np.cos(a)
+            acc += w * ndi.shift(blurred[r], (-round(dy), -round(dx)), order=0, mode="nearest")
+            wsum += w
+        best = np.maximum(best, acc / wsum)
+    return (np.exp(best) - eps).astype(np.float32)
+
+
+def _longest_paths_cone(b: np.ndarray, cone: str) -> np.ndarray:
+    """Largo del camino más largo que llega a cada píxel de `b` dentro de un cono de adyacencia.
+
+    Conos de Talbot y Appleton (2007): "vertical" (vecinos de arriba: arriba a
+    la izquierda, arriba, arriba a la derecha) y "diagonal" (arriba, arriba a la
+    derecha, derecha). Los otros dos conos salen de girar o reflejar la imagen.
+    """
+    rows, cols = b.shape
+    lam = np.zeros(b.shape, dtype=np.int32)
+    if cone == "vertical":
+        lam[0] = b[0]
+        for i in range(1, rows):
+            prev = lam[i - 1]
+            best = prev.copy()
+            best[1:] = np.maximum(best[1:], prev[:-1])
+            best[:-1] = np.maximum(best[:-1], prev[1:])
+            lam[i] = np.where(b[i], best + 1, 0)
+        return lam
+    # diagonal: predecesores (i−1, j), (i−1, j+1), (i, j+1); se recorren las diagonales t = i − j
+    # en orden creciente. En coordenadas (t, i) los predecesores son (t−1, i−1), (t−1, i) y (t−2, i−1).
+    n_t = rows + cols - 1
+    s = np.zeros((n_t, rows), dtype=bool)
+    ii, jj = np.indices(b.shape)
+    tt = ii - jj + cols - 1
+    s[tt, ii] = b
+    out = np.zeros((n_t, rows), dtype=np.int32)
+    for t in range(n_t):
+        best = np.zeros(rows, dtype=np.int32)
+        if t >= 1:
+            best[1:] = out[t - 1, :-1]
+            best = np.maximum(best, out[t - 1])
+        if t >= 2:
+            best[1:] = np.maximum(best[1:], out[t - 2, :-1])
+        out[t] = np.where(s[t], best + 1, 0)
+    lam[ii, jj] = out[tt, ii]
+    return lam
+
+
+def path_lengths(b: np.ndarray) -> np.ndarray:
+    """Para cada píxel de `b`, el largo del camino más largo de `b` que pasa por él, entre los 4 conos.
+
+    En cada cono, el camino que pasa por p mide (lo que llega desde un lado) +
+    (lo que llega desde el otro) − 1; el del otro lado es el mismo cálculo con
+    la imagen girada 180°.
+    """
+    b = np.asarray(b, dtype=bool)
+    best = np.zeros(b.shape, dtype=np.int32)
+    views = [(lambda x: x, lambda x: x, "vertical"),
+             (lambda x: x.T, lambda x: x.T, "vertical"),
+             (lambda x: x, lambda x: x, "diagonal"),
+             (lambda x: x[:, ::-1], lambda x: x[:, ::-1], "diagonal")]
+    for fwd, back, cone in views:
+        v = fwd(b)
+        up = _longest_paths_cone(v, cone)
+        down = _longest_paths_cone(v[::-1, ::-1], cone)[::-1, ::-1]
+        best = np.maximum(best, back(np.where(v, up + down - 1, 0)))
+    return best
+
+
+def path_openings(m: np.ndarray, region: np.ndarray, lengths, n_levels: int = 16,
+                  q_low: float = 0.5, q_high: float = 0.99) -> list[np.ndarray]:
+    """Aperturas por caminos en escala de grises (Talbot y Appleton, 2007), una por largo.
+
+    Una apertura con segmentos rectos (line_opening_reconstruction) conserva
+    lo claro que contiene un segmento de largo L; una apertura por caminos
+    conserva lo claro que contiene un camino de L píxeles que puede curvarse
+    (en cada paso avanza hacia uno de tres vecinos de un cono), así que no
+    pierde los vasos finos tortuosos. En escala de grises se descompone por
+    umbrales: `n_levels` niveles, cuantiles de `q_low` a `q_high` del mapa en
+    el campo, y cada píxel recibe el nivel más alto en que pertenece a un
+    camino de largo ≥ L. Debajo del nivel más bajo queda ese nivel.
+
+    Limitación: un camino no cambia de cono, así que sigue curvas que no se
+    apartan más de 45° de una dirección; un vaso que gira más dentro de un
+    largo L queda cortado en tramos.
+    """
+    m = np.asarray(m, dtype=np.float64)
+    region = np.asarray(region, dtype=bool)
+    levels = np.quantile(m[region], np.linspace(q_low, q_high, n_levels))
+    outs = [np.full(m.shape, levels[0]) for _ in lengths]
+    for h in levels:
+        lengths_here = path_lengths((m >= h) & region)
+        for out, length in zip(outs, lengths):
+            out[lengths_here >= length] = h
+    return [o.astype(np.float32) for o in outs]
+
+
+def hessian_eigenvalues(m: np.ndarray, sigma: float) -> tuple[np.ndarray, np.ndarray]:
+    """Los dos autovalores del hessiano a escala σ, normalizados por σ² (λ1 ≥ λ2).
+
+    Frangi los resume en un solo número con parámetros fijos; sueltos, la
+    regresión aprende cómo combinarlos (Niemeijer et al., 2004, y Staal et
+    al., 2004, usan derivadas gaussianas de segundo orden como características).
+    En el centro de un vaso claro, λ2 es muy negativo (curvatura a través del
+    vaso) y λ1 casi cero (a lo largo).
+    """
+    from skimage.feature import hessian_matrix, hessian_matrix_eigvals
+
+    h = hessian_matrix(np.asarray(m, dtype=np.float64), sigma=sigma, order="rc",
+                       use_gaussian_derivatives=False)
+    l1, l2 = hessian_matrix_eigvals(h)
+    return (sigma ** 2 * l1).astype(np.float32), (sigma ** 2 * l2).astype(np.float32)
