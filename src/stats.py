@@ -119,3 +119,79 @@ def predict_logistic(x: np.ndarray, w: np.ndarray) -> np.ndarray:
     """Probabilidad de vaso según los coeficientes de fit_logistic."""
     z = w[0] + np.asarray(x, dtype=np.float64) @ w[1:]
     return 1.0 / (1.0 + np.exp(-np.clip(z, -35, 35)))
+
+
+def logistic_deviance(x: np.ndarray, y: np.ndarray, w: np.ndarray) -> float:
+    """Menos el logaritmo de la verosimilitud, por píxel, de los coeficientes `w` (ordenada primero)."""
+    z = w[0] + np.asarray(x, dtype=np.float64) @ w[1:]
+    return float(np.mean(np.logaddexp(0.0, z) - np.asarray(y, dtype=np.float64) * z))
+
+
+def fit_logistic_l1(x: np.ndarray, y: np.ndarray, lam: float, w0: np.ndarray | None = None,
+                    max_iter: int = 100, tol: float = 1e-7) -> np.ndarray:
+    """Regresión logística con penalidad L1 (lasso; Tibshirani, 1996).
+
+    Minimiza logistic_deviance + lam · Σ |w_j|, sin penalizar la ordenada. Es
+    lo mismo que maximizar la verosimilitud con la restricción Σ |w_j| <= t:
+    la penalidad deja en cero exactamente los coeficientes de los mapas que no
+    agregan información propia. Los mapas tienen que estar estandarizados
+    (lo están: _standardized), para que la penalidad trate a todos igual.
+
+    Newton proximal: en cada paso se aproxima la verosimilitud por una
+    cuadrática (como fit_logistic) y se resuelve el lasso sobre esa cuadrática
+    por descenso por coordenadas con umbral suave (Friedman, Hastie y
+    Tibshirani, 2010); un paso más corto si el objetivo no baja. `w0` sirve
+    para arrancar desde la solución de un λ vecino.
+    """
+    xa = np.c_[np.ones(len(x)), np.asarray(x, dtype=np.float64)]
+    y = np.asarray(y, dtype=np.float64)
+    n, p = xa.shape
+    w = np.zeros(p) if w0 is None else np.asarray(w0, dtype=np.float64).copy()
+
+    def objective(v):
+        z = xa @ v
+        return float(np.mean(np.logaddexp(0.0, z) - y * z) + lam * np.abs(v[1:]).sum())
+
+    f = objective(w)
+    for _ in range(max_iter):
+        pr = 1.0 / (1.0 + np.exp(-np.clip(xa @ w, -35, 35)))
+        g = xa.T @ (pr - y) / n
+        h = (xa * (pr * (1 - pr))[:, None]).T @ xa / n + 1e-10 * np.eye(p)
+        d = np.zeros(p)
+        hd = np.zeros(p)
+        for _sweep in range(200):
+            change = 0.0
+            for j in range(p):
+                a = h[j, j]
+                b = g[j] + hd[j] - a * d[j]
+                if j == 0:
+                    dj = -b / a
+                else:
+                    u = w[j] - b / a
+                    dj = np.sign(u) * max(abs(u) - lam / a, 0.0) - w[j]
+                delta = dj - d[j]
+                if delta != 0.0:
+                    hd += h[:, j] * delta
+                    d[j] = dj
+                    change = max(change, abs(delta))
+            if change < 1e-10:
+                break
+        step = 1.0
+        while True:
+            w_new = w + step * d
+            f_new = objective(w_new)
+            if f_new <= f + 1e-12 or step < 1e-6:
+                break
+            step /= 2
+        moved = np.max(np.abs(w_new - w))
+        w, f = w_new, f_new
+        if moved < tol:
+            break
+    return w
+
+
+def l1_lambdas(x: np.ndarray, y: np.ndarray, n: int = 25, ratio: float = 1e-4) -> np.ndarray:
+    """Valores de λ de mayor a menor: desde el primero que deja todos los coeficientes en cero."""
+    y = np.asarray(y, dtype=np.float64)
+    lam_max = float(np.max(np.abs(np.asarray(x, dtype=np.float64).T @ (y - y.mean()))) / len(y))
+    return np.geomspace(lam_max, lam_max * ratio, n)

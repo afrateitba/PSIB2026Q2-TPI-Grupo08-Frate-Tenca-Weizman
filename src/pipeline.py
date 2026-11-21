@@ -311,6 +311,53 @@ def fit_weights(samples: dict[str, dict], image_ids) -> np.ndarray:
     return fit_logistic(x, y, ridge=1e-3)
 
 
+def fit_weights_l1(samples: dict[str, dict], image_ids, groups: dict, n_lambdas: int = 25
+                   ) -> tuple[np.ndarray, float, dict]:
+    """Pesos con penalidad L1 (stats.fit_logistic_l1), con λ elegido sin mirar afuera de `image_ids`.
+
+    λ se elige por validación cruzada con los grupos `groups` (imagen → grupo;
+    las personas de un grupo quedan juntas): para cada grupo, se ajusta la ruta
+    de λ con los otros y se mide la devianza (stats.logistic_deviance) en sus
+    píxeles de entrenamiento. Se toma el λ más grande cuya devianza media no
+    supera a la mínima en más de un error estándar (regla de un error
+    estándar; Hastie, Tibshirani y Friedman, 2009, sección 7.10): el modelo
+    más simple que no se distingue del mejor. Después se ajusta con todas las
+    imágenes de `image_ids`.
+
+    Devuelve (pesos, λ elegido, detalle con la ruta: λ, devianza media, error
+    estándar y mapas activos con todas las imágenes).
+    """
+    from .stats import fit_logistic_l1, l1_lambdas, logistic_deviance
+
+    ids = list(image_ids)
+    x = np.concatenate([samples[i]["x"] for i in ids])
+    y = np.concatenate([samples[i]["y"] for i in ids])
+    lams = l1_lambdas(x, y, n_lambdas)
+    keys = sorted({groups[i] for i in ids})
+    dev = np.zeros((len(keys), len(lams)))
+    for gi, g in enumerate(keys):
+        tr = [i for i in ids if groups[i] != g]
+        te = [i for i in ids if groups[i] == g]
+        xtr = np.concatenate([samples[i]["x"] for i in tr])
+        ytr = np.concatenate([samples[i]["y"] for i in tr])
+        xte = np.concatenate([samples[i]["x"] for i in te])
+        yte = np.concatenate([samples[i]["y"] for i in te])
+        w = None
+        for li, lam in enumerate(lams):
+            w = fit_logistic_l1(xtr, ytr, lam, w0=w)
+            dev[gi, li] = logistic_deviance(xte, yte, w)
+    mean = dev.mean(axis=0)
+    se = dev.std(axis=0, ddof=1) / np.sqrt(len(keys))
+    best = int(np.argmin(mean))
+    chosen = int(np.flatnonzero(mean <= mean[best] + se[best])[0])     # λ de mayor a menor
+    w, active = None, []
+    for lam in lams[: chosen + 1]:
+        w = fit_logistic_l1(x, y, lam, w0=w)
+        active.append(int(np.count_nonzero(w[1:])))
+    return w, float(lams[chosen]), {"lambdas": lams, "deviance": mean, "se": se, "best": float(lams[best]),
+                                    "active_path": active}
+
+
 def _weighted_quantile(v: np.ndarray, w: np.ndarray, q: float) -> float:
     o = np.argsort(v)
     return v[o][np.searchsorted(np.cumsum(w[o]) / w.sum(), q)]

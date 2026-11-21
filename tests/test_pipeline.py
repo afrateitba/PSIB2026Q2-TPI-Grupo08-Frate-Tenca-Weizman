@@ -136,3 +136,17 @@ def test_pesos_con_su_lista_de_mapas(tmp_path):
                                                   "coefficients": list(range(26))}), encoding="utf-8")
     assert load_feature_names(tmp_path / "v1.json") == names
     assert len(load_weights(tmp_path / "v1.json")) == 27
+
+
+def test_fit_weights_l1_elige_lambda_y_deja_afuera_lo_que_no_aporta():
+    from src.pipeline import fit_weights_l1
+    rng = np.random.default_rng(0)
+    samples, groups = {}, {}
+    for k in range(8):
+        x = rng.normal(0, 1, (3000, 6))
+        z = 1.5 * x[:, 0] - 1.0 * x[:, 2]
+        samples[f"i{k}"] = {"x": x, "y": rng.random(3000) < 1 / (1 + np.exp(-z))}
+        groups[f"i{k}"] = k % 4
+    w, lam, info = fit_weights_l1(samples, list(samples), groups)
+    assert np.flatnonzero(w[1:]).tolist() == [0, 2]
+    assert lam >= info["best"]                       # la regla de un error estándar no elige un λ menor

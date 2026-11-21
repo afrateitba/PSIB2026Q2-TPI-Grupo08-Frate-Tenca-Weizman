@@ -98,3 +98,32 @@ def test_person_bootstrap_stat_matches_means():
     by_stat = person_bootstrap_stat(frame, persons, lambda f: f["a"].mean(), reps=200)
     by_means = person_bootstrap_means(frame["a"], persons, reps=200)[:, 0]
     assert np.allclose(by_stat, by_means)
+
+
+def _datos_logisticos(n=20000, seed=0):
+    rng = np.random.default_rng(seed)
+    x = rng.normal(0, 1, (n, 8))
+    x[:, 5] = x[:, 0] + 0.05 * rng.normal(0, 1, n)          # casi copia del mapa 0
+    z = -0.5 + 2.0 * x[:, 0] - 1.0 * x[:, 3]
+    y = rng.random(n) < 1 / (1 + np.exp(-z))
+    return x, y
+
+
+def test_l1_sin_penalidad_es_la_regresion_comun():
+    from src.stats import fit_logistic, fit_logistic_l1
+    x, y = _datos_logisticos()
+    x = x[:, [0, 1, 2, 3]]
+    np.testing.assert_allclose(fit_logistic_l1(x, y, 0.0), fit_logistic(x, y, ridge=0.0), atol=1e-5)
+
+
+def test_l1_deja_en_cero_lo_que_no_aporta_y_una_de_las_copias():
+    from src.stats import fit_logistic_l1, l1_lambdas
+    x, y = _datos_logisticos()
+    lams = l1_lambdas(x, y)
+    w_max = fit_logistic_l1(x, y, lams[0])
+    assert np.all(w_max[1:] == 0)                              # con el λ más grande, solo la ordenada
+    w = fit_logistic_l1(x, y, 0.01)
+    activos = set(np.flatnonzero(w[1:]))
+    assert 3 in activos and (0 in activos or 5 in activos)
+    assert not ({1, 2, 4, 6, 7} & activos)                       # los que no aportan quedan en cero
+    assert not ({0, 5} <= activos and min(abs(w[1]), abs(w[6])) > 0.2)   # no reparte entre las copias
