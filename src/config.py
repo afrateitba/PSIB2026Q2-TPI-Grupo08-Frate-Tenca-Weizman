@@ -138,6 +138,9 @@ SEGMENT_BACKGROUND_MODE = "división"
 # Etapa 5i (notebooks/05i_exudados.ipynb; desvío 14.11): antes de normalizar se rellenan los exudados
 # (preprocess.rellenar_exudados; Annunziata et al., 2016). Matthews +0,0013, en el límite de la regla.
 SEGMENT_BACKGROUND_MODE = SEGMENT_BACKGROUND_MODE + " + relleno de exudados"
+# Etapa 5k (notebooks/05k_wiener.ipynb; desvío 14.11): antes de todo, Wiener local con el ruido estimado
+# en cada imagen (preprocess.wiener_ruido_estimado). Sin ruido agregado −0,0008 de Matthews; con ruido 10, +0,064.
+SEGMENT_BACKGROUND_MODE = SEGMENT_BACKGROUND_MODE + " + Wiener con ruido estimado"
 SEGMENT_BASE_FEATURES = ["verde corregido", "sombrero de copa", "detector de líneas",
                          "filtro adaptado", "Gabor", "Frangi"]
 # Ronda de mejoras (etapa 5e, notebooks/05e_ronda_mejoras.ipynb; plan, desvío 14.6):
