@@ -40,6 +40,16 @@ La máscara se guarda en blanco (vaso) y negro (fondo), del tamaño de la foto. 
 
 **Resultado en el conjunto de prueba** (15 imágenes de 10 personas, corrido una sola vez): coeficiente de Matthews 0,729 contra 0,709 del método clásico, +0,020 (intervalo al 95 %: 0,012 a 0,028). Detalle en `notebooks/99_prueba.ipynb`.
 
+### Versión 2 (para la entrega final)
+
+```bash
+.venv/Scripts/python scripts/segmentar.py foto.jpg mascara.png --v2
+```
+
+Junta las mejoras de la ronda para la entrega final (etapas 5g a 5m; desvío 14.11 del plan), decididas solo con desarrollo y con la regla escrita antes de correr: Wiener local con el ruido estimado en cada foto, relleno de los exudados, normalización del fondo por división (en lugar de resta), y una regresión con penalidad L1 que se queda con 14 mapas (entre ellos dos de B-COSFIRE y una apertura por reconstrucción). Pesos y umbrales en `models/pesos_v2.json` (`notebooks/05n_version2.ipynb`). Tarda unos 30 segundos por foto.
+
+En desarrollo (validación cruzada por personas) da Matthews 0,750 contra 0,730 de la versión 1, y es mucho más robusta al ruido (con ruido de desvío 10, 0,71 contra 0,65 sin el Wiener). Es una estimación optimista: varias rondas se decidieron con las mismas 30 imágenes. **No se evaluó en prueba:** el resultado oficial es el de la versión 1.
+
 ## Ejecución
 
 - `scripts/make_split.py`: genera `data/split.csv` (ya está generado y versionado; no se vuelve a correr).

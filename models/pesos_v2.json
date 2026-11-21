@@ -1,0 +1,40 @@
+{
+  "features": [
+    "sombrero de copa",
+    "Gabor",
+    "Frangi 2",
+    "filtro adaptado 4",
+    "detector de líneas 8",
+    "filtro adaptado 8",
+    "Frangi 8",
+    "detector de líneas 16",
+    "Frangi 16",
+    "detector de líneas 24",
+    "Gabor 24",
+    "apertura por reconstrucción 4 %",
+    "B-COSFIRE simétrico",
+    "B-COSFIRE simétrico fino"
+  ],
+  "intercept": -1.4460868312288373,
+  "coefficients": [
+    0.12283951339864421,
+    0.37467246410682775,
+    -0.09313988919154093,
+    0.39819591934597137,
+    0.12555822208229658,
+    1.057543617360743,
+    -0.41010409858280467,
+    0.38504234159343775,
+    -0.7528419916261077,
+    1.1313988547915173,
+    0.16686980238175855,
+    0.08022984338371145,
+    -0.13119514008671163,
+    0.10370240464010964
+  ],
+  "fraction": 0.09,
+  "value": 0.8580625920306306,
+  "background": "división + relleno de exudados + Wiener con ruido estimado",
+  "note": "Versión 2 (etapas 5g a 5m, desvío 14.11): Wiener con ruido estimado, relleno de exudados y división; regresión con L1 sobre 31 mapas, λ por validación cruzada por personas con la regla de un error estándar (λ = 0.00242); ajustada con las 30 imágenes de desarrollo (notebooks/05n_version2.ipynb). No se evaluó en prueba.",
+  "reference_value": 1.0054415845870972
+}
