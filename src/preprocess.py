@@ -1,6 +1,7 @@
 """Preprocesamiento de los mapas de características."""
 
 import numpy as np
+from scipy import ndimage as ndi
 from scipy.ndimage import gaussian_filter
 
 # Modos de normalizar_fondo (ronda de normalización, notebooks/05g_normalizacion.ipynb).
@@ -108,8 +109,6 @@ def rellenar_exudados(mapa, campo, diametro, k=4.0, radio_disco_rel=0.10, area_m
     Devuelve (mapa rellenado, máscara de lo rellenado). Los parámetros son de
     criterio, en proporción al diámetro del campo; no se ajustaron con datos.
     """
-    from scipy import ndimage as ndi
-
     m = np.asarray(mapa, dtype=np.float64)
     campo = np.asarray(campo, dtype=bool)
     g = -m
@@ -137,10 +136,75 @@ def rellenar_exudados(mapa, campo, diametro, k=4.0, radio_disco_rel=0.10, area_m
     return np.where(relleno, estimado, m).astype(np.float32), relleno
 
 
+# --- Wiener con el ruido estimado en cada imagen (etapa 5k, notebooks/05k_wiener.ipynb) ------
+PASO_WIENER_ESTIMADO = "Wiener con ruido estimado"
+PASO_WIENER_LOCAL = "Wiener local"
+PASO_RELLENO = SUFIJO_RELLENO[3:]
+PASOS_PREVIOS = (PASO_WIENER_ESTIMADO, PASO_WIENER_LOCAL, PASO_RELLENO)   # en el orden en que se aplican
+
+# Máscara de Immerkær (1996): dos laplacianos restados; anula planos y rampas.
+_MASCARA_RUIDO = np.array([[1, -2, 1], [-2, 4, -2], [1, -2, 1]], dtype=np.float64)
+
+
+def estimar_ruido(mapa, campo, margen=3):
+    """Desvío del ruido blanco del mapa, estimado dentro del campo de visión.
+
+    Filtra con la máscara de Immerkær (1996), que deja pasar casi solo el ruido
+    (con ruido de desvío σ, la salida tiene desvío 6σ), y toma la mediana del
+    valor absoluto en lugar de la media, como la desviación mediana absoluta
+    de Donoho y Johnstone (1994): así los bordes de los vasos, que también
+    responden, no inflan la estimación mientras sean una minoría de los
+    píxeles. Se excluye una franja de `margen` píxeles junto al borde del campo.
+    """
+    m = np.asarray(mapa, dtype=np.float64)
+    campo = np.asarray(campo, dtype=bool)
+    interior = ndi.binary_erosion(campo, iterations=margen) if margen > 0 else campo
+    respuesta = ndi.convolve(m, _MASCARA_RUIDO, mode="reflect")
+    return float(np.median(np.abs(respuesta[interior])) / (0.6745 * 6))
+
+
+def wiener_ruido_estimado(mapa, campo, tamaño=5):
+    """Filtro de Wiener local (Lee, 1980) con la varianza del ruido estimada en la imagen.
+
+    En cada ventana de `tamaño` × `tamaño`: media + (1 − ruido / varianza) ×
+    (valor − media), y la media donde la varianza no supera al ruido. Es lo
+    que hace scipy.signal.wiener, salvo por el ruido: scipy usa el promedio de
+    las varianzas locales, que en una foto limpia sale alto por los propios
+    vasos y la suaviza igual. Con estimar_ruido, en una foto limpia el ruido es
+    chico y el filtro casi no cambia nada; en una ruidosa, suaviza el fondo y
+    respeta los vasos (donde la varianza local es mucho mayor que el ruido).
+    Afuera del campo de visión deja el mapa como estaba.
+    """
+    m = np.asarray(mapa, dtype=np.float64)
+    campo = np.asarray(campo, dtype=bool)
+    ruido = estimar_ruido(m, campo) ** 2
+    media = ndi.uniform_filter(m, tamaño, mode="reflect")
+    var = np.maximum(ndi.uniform_filter(m * m, tamaño, mode="reflect") - media ** 2, 0.0)
+    ganancia = np.maximum(var - ruido, 0.0) / np.maximum(var, 1e-12)
+    return np.where(campo, media + ganancia * (m - media), m).astype(np.float32)
+
+
 def preprocesar_verde(mapa, campo, diametro, modo, sigma_fondo_rel):
-    """Preprocesamiento del verde orientado según `modo`: un modo de normalizar_fondo, con
-    SUFIJO_RELLENO al final si antes se rellenan los exudados (rellenar_exudados)."""
-    if modo.endswith(SUFIJO_RELLENO):
-        modo = modo[: -len(SUFIJO_RELLENO)]
+    """Preprocesamiento del verde orientado según `modo`.
+
+    `modo` es un modo de normalizar_fondo seguido, opcionalmente, de pasos
+    previos separados por " + ", por ejemplo "división + relleno de exudados".
+    Los pasos se aplican en el orden de PASOS_PREVIOS, sea cual sea el orden en
+    que estén escritos: Wiener (con el ruido estimado, wiener_ruido_estimado, o
+    el de la etapa 3, restoration.wiener_denoise), después el relleno de los
+    exudados (rellenar_exudados) y al final la normalización del fondo.
+    """
+    from .config import WIENER_SIZE
+
+    base, *pasos = modo.split(" + ")
+    desconocidos = set(pasos) - set(PASOS_PREVIOS)
+    if desconocidos:
+        raise ValueError(f"Paso de preprocesamiento desconocido: {sorted(desconocidos)}")
+    if PASO_WIENER_ESTIMADO in pasos:
+        mapa = wiener_ruido_estimado(mapa, campo, WIENER_SIZE)
+    if PASO_WIENER_LOCAL in pasos:
+        from .restoration import wiener_denoise
+        mapa = wiener_denoise(mapa, campo, WIENER_SIZE)
+    if PASO_RELLENO in pasos:
         mapa, _ = rellenar_exudados(mapa, campo, diametro, sigma_fondo_rel=sigma_fondo_rel)
-    return normalizar_fondo(mapa, campo, sigma_fondo_rel * diametro, modo)
+    return normalizar_fondo(mapa, campo, sigma_fondo_rel * diametro, base)

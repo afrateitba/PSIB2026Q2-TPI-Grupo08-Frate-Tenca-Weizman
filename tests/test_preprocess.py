@@ -92,3 +92,42 @@ def test_relleno_de_exudados_rellena_la_mancha_y_respeta_vaso_y_disco():
     assert not mask[:, 150:153].any()                          # nunca tapa el vaso
     assert abs(-out[140, 140] - 100) < 10                       # queda al nivel del fondo
     np.testing.assert_array_equal(out[:, 150:153], -g[:, 150:153])
+
+
+def _fondo_con_vasos(n=200):
+    yy, xx = np.mgrid[:n, :n]
+    g = 0.5 + 0.2 * xx / n                       # rampa de iluminación
+    for c in (40, 100, 160):
+        g[:, c:c + 3] -= 0.15                     # vasos de 3 píxeles
+    return -g, np.ones((n, n), bool)
+
+
+def test_estimar_ruido_recupera_el_desvio_aunque_haya_vasos():
+    from src.preprocess import estimar_ruido
+    mapa, campo = _fondo_con_vasos()
+    rng = np.random.default_rng(0)
+    for sigma in (0.01, 0.03):
+        est = estimar_ruido(mapa + rng.normal(0, sigma, mapa.shape), campo)
+        assert abs(est / sigma - 1) < 0.1
+    assert estimar_ruido(mapa, campo) < 1e-6          # sin ruido, cero (la rampa y los vasos no cuentan)
+
+
+def test_wiener_estimado_no_toca_la_foto_limpia_y_limpia_la_ruidosa():
+    from src.preprocess import wiener_ruido_estimado
+    from src.restoration import wiener_denoise
+    mapa, campo = _fondo_con_vasos()
+    np.testing.assert_allclose(wiener_ruido_estimado(mapa, campo), mapa, atol=1e-6)
+    assert np.abs(wiener_denoise(mapa, campo, 5) - mapa).max() > 0.02     # el de scipy sí la cambia
+    ruidosa = mapa + np.random.default_rng(1).normal(0, 0.03, mapa.shape)
+    out = wiener_ruido_estimado(ruidosa, campo)
+    assert np.mean((out - mapa) ** 2) < 0.5 * np.mean((ruidosa - mapa) ** 2)
+
+
+def test_preprocesar_verde_compone_los_pasos():
+    from src.preprocess import preprocesar_verde
+    mapa, campo = _fondo_con_vasos()
+    a = preprocesar_verde(mapa, campo, 200, "división + relleno de exudados", 0.02)
+    b = preprocesar_verde(mapa, campo, 200, "división + Wiener con ruido estimado + relleno de exudados", 0.02)
+    np.testing.assert_allclose(a, b, atol=1e-5)       # sin ruido, el Wiener estimado no cambia nada
+    with pytest.raises(ValueError):
+        preprocesar_verde(mapa, campo, 200, "división + otro paso", 0.02)
