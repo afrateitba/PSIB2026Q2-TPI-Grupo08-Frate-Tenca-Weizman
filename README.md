@@ -46,9 +46,14 @@ La máscara se guarda en blanco (vaso) y negro (fondo), del tamaño de la foto. 
 .venv/Scripts/python scripts/segmentar.py foto.jpg mascara.png --v2
 ```
 
-Junta las mejoras de la ronda para la entrega final (etapas 5g a 5m; desvío 14.11 del plan), decididas solo con desarrollo y con la regla escrita antes de correr: Wiener local con el ruido estimado en cada foto, relleno de los exudados, normalización del fondo por división (en lugar de resta), y una regresión con penalidad L1 que se queda con 14 mapas (entre ellos dos de B-COSFIRE y una apertura por reconstrucción). Pesos y umbrales en `models/pesos_v2.json` (`notebooks/05n_version2.ipynb`). Tarda unos 30 segundos por foto.
+Junta lo que quedó de la ronda de mejoras para la entrega final (etapas 5g a 5o; desvío 14.11 del plan), decidido solo con desarrollo y con la regla escrita antes de correr:
+- **Wiener local con el ruido estimado en cada foto** (máscara de Immerkær con la mediana): casi no toca las fotos limpias y limpia las ruidosas;
+- **normalización del fondo por división** en lugar de resta, porque la iluminación es multiplicativa;
+- **regresión logística con penalidad L1**, que se queda con 13 de los 26 mapas.
 
-En desarrollo (validación cruzada por personas) da Matthews 0,750 contra 0,730 de la versión 1, y es mucho más robusta al ruido (con ruido de desvío 10, 0,71 contra 0,65 sin el Wiener). Es una estimación optimista: varias rondas se decidieron con las mismas 30 imágenes. **No se evaluó en prueba:** el resultado oficial es el de la versión 1.
+Pesos y umbrales en `models/pesos_v2.json` (`notebooks/05n_version2.ipynb`). **Tarda unos 13 segundos por foto** (la versión 1, unos 18).
+
+En desarrollo (validación cruzada por personas) da Matthews 0,748 contra 0,730 de la versión 1, y es mucho más robusta al ruido (con ruido de desvío 10, 0,72). Es una estimación optimista: varias rondas se decidieron con las mismas 30 imágenes. **No se evaluó en prueba:** el resultado oficial es el de la versión 1. Se probaron y no quedaron: histéresis, mapas contra lesiones, relleno de exudados, B-COSFIRE, simetría de fase, aperturas por caminos y autovalores del hessiano (la apertura por reconstrucción contra lesiones, el relleno de exudados y B-COSFIRE se habían adoptado en su ronda y se sacaron por costo en `05o`: juntos tardaban 15 segundos por foto y aportaban 0,002 de Matthews).
 
 ## Ejecución
 
