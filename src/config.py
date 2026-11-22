@@ -194,6 +194,11 @@ SEGMENT_FEATURES = SEGMENT_FEATURES + COSFIRE_FEATURES
 # Quedan 13 a 15 mapas por vuelta; Matthews −0,0025 y vasos finos −1,8 puntos, dentro del margen. La lista
 # final sale del ajuste con las 30 imágenes (versión 2) y se guarda con los pesos.
 SEGMENT_FIT = "L1"
+# Etapa 5o (notebooks/05o_v2_liviana.ipynb; desvío de criterio por costo): versión liviana. Sin B-COSFIRE
+# (8 s por foto, no cambia nada), sin aperturas por reconstrucción ni relleno de exudados (7 s; Matthews
+# −0,0019). Tarda 13,4 s por foto (la versión 1, 17,5; la completa, 28,5) y en desarrollo da 0,748.
+SEGMENT_BACKGROUND_MODE = "división + Wiener con ruido estimado"
+SEGMENT_FEATURES = [n for n in SEGMENT_FEATURES if n not in COSFIRE_FEATURES and n not in LESION_FEATURES]
 SEGMENT_REFERENCE_FILTER = "detector de líneas"
 SEGMENT_FRACTION = 0.09        # elegida en las 5 vueltas
 # Regla del umbral, cerrada en la etapa 8 (notebooks/08_robustez.ipynb) con el
